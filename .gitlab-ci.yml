@@ -1,0 +1,125 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# GitLab CI/CD for the Quip faucet bot.
+# Publishes a multi-arch image to ${CI_REGISTRY_IMAGE} on main and on tags.
+# Mirrors the quip-protocol publish pattern: Kaniko (daemonless) on a
+# linux/amd64 runner, docker buildx on the private macOS-arm64 shell
+# runner, then manifest-tool stitches both per-arch tags into a single
+# multi-arch manifest.
+
+stages:
+  - build
+  - manifest
+
+variables:
+  # → registry.gitlab.com/quip.network/faucet
+  IMAGE: ${CI_REGISTRY_IMAGE}
+
+# ---------------------------------------------------------------------------
+# Per-arch builds
+# ---------------------------------------------------------------------------
+
+build-amd64:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  tags: [linux, amd64]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+  before_script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64)\"}}}" > /kaniko/.docker/config.json
+  script:
+    - /kaniko/executor
+        --context $CI_PROJECT_DIR
+        --dockerfile Dockerfile
+        --destination $IMAGE:$CI_COMMIT_SHA-amd64
+
+build-arm64:
+  stage: build
+  tags: [macos, arm64]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+  before_script:
+    # Isolated buildx builder per project. Create-if-missing is idempotent
+    # across job retries. docker-container driver is required so --push
+    # works in a single invocation.
+    - docker buildx inspect quip-faucet-ci >/dev/null 2>&1 || docker buildx create --name quip-faucet-ci --driver docker-container --bootstrap
+    - docker buildx use quip-faucet-ci
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - >
+      docker buildx build
+      --platform linux/arm64
+      --push
+      -t "$IMAGE:$CI_COMMIT_SHA-arm64"
+      -f Dockerfile
+      .
+  after_script:
+    - docker logout "$CI_REGISTRY" || true
+
+# ---------------------------------------------------------------------------
+# Multi-arch manifest (branch / tag)
+# manifest-tool's `--template "...-ARCH"` is substituted per-platform
+# (ARCH → amd64 / arm64) — the per-arch tags above must match exactly.
+# ---------------------------------------------------------------------------
+
+manifest-branch:
+  stage: manifest
+  image:
+    name: mplatform/manifest-tool:alpine-v2.2.1
+    entrypoint: [""]
+  tags: [linux, amd64]
+  needs:
+    - build-amd64
+    - build-arm64
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+  script:
+    - >
+      manifest-tool
+      --username "$CI_REGISTRY_USER"
+      --password "$CI_REGISTRY_PASSWORD"
+      push from-args
+      --platforms linux/amd64,linux/arm64
+      --template "$IMAGE:$CI_COMMIT_SHA-ARCH"
+      --target "$IMAGE:$CI_COMMIT_SHA"
+    - >
+      manifest-tool
+      --username "$CI_REGISTRY_USER"
+      --password "$CI_REGISTRY_PASSWORD"
+      push from-args
+      --platforms linux/amd64,linux/arm64
+      --template "$IMAGE:$CI_COMMIT_SHA-ARCH"
+      --target "$IMAGE:latest"
+
+manifest-tag:
+  stage: manifest
+  image:
+    name: mplatform/manifest-tool:alpine-v2.2.1
+    entrypoint: [""]
+  tags: [linux, amd64]
+  needs:
+    - build-amd64
+    - build-arm64
+  rules:
+    - if: $CI_COMMIT_TAG
+  script:
+    - >
+      manifest-tool
+      --username "$CI_REGISTRY_USER"
+      --password "$CI_REGISTRY_PASSWORD"
+      push from-args
+      --platforms linux/amd64,linux/arm64
+      --template "$IMAGE:$CI_COMMIT_SHA-ARCH"
+      --target "$IMAGE:$CI_COMMIT_TAG"
+    - >
+      manifest-tool
+      --username "$CI_REGISTRY_USER"
+      --password "$CI_REGISTRY_PASSWORD"
+      push from-args
+      --platforms linux/amd64,linux/arm64
+      --template "$IMAGE:$CI_COMMIT_SHA-ARCH"
+      --target "$IMAGE:latest"
