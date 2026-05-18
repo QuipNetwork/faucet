@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone dev-only faucet for substrate chains.
 
-Listens on an HTTP endpoint and submits `Balances.transfer_keep_alive` from a
+Listens on an HTTP endpoint and submits `Sudo.sudo(FaucetOps.mint)` from a
 single funded account (typically `//Alice` on a dev chain) to whichever
 destination is requested. Rate-limits per destination so a misbehaving caller
 can't drain the funding key.
@@ -246,6 +246,36 @@ def _strip_0x(s: str) -> str:
     return s[2:] if s.startswith("0x") else s
 
 
+def _is_err_variant(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, dict):
+        if "Err" in value:
+            return True
+        if "Ok" in value:
+            return False
+        return any(_is_err_variant(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_is_err_variant(v) for v in value)
+    if isinstance(value, str):
+        lower = value.lower()
+        return lower == "err" or lower.startswith("err(")
+    return False
+
+
+def _compose_sudo_mint_call(iface: SubstrateInterface, *, dest: str, amount: int):
+    inner = iface.compose_call(
+        call_module="FaucetOps",
+        call_function="mint",
+        call_params={"who": dest, "amount": amount},
+    )
+    return iface.compose_call(
+        call_module="Sudo",
+        call_function="sudo",
+        call_params={"call": inner},
+    )
+
+
 def _encode_compact_u32(n: int) -> bytes:
     if n < 0:
         raise ValueError(f"compact must be non-negative, got {n}")
@@ -280,13 +310,11 @@ def _encode_compact_u128(n: int) -> bytes:
 def _fetch_extrinsic_dispatch_error(
     iface: SubstrateInterface, *, block_hash: str, ext_hash: str
 ) -> Optional[str]:
-    """Return a stringified `ExtrinsicFailed` event if dispatch failed.
+    """Return a stringified dispatch failure for an included extrinsic.
 
-    `author_submitAndWatchExtrinsic` only reports "this hit a block" — the
-    runtime may still emit `System.ExtrinsicFailed` for that extrinsic
-    index. Mirrors `shared/substrate_client._fetch_extrinsic_dispatch_error`
-    so the faucet's silent-success behaviour on chain-rejected dispatches
-    can't drift back. Returns None when dispatch succeeded.
+    The faucet uses `sudo(FaucetOps.mint)`, so success means both:
+      - no `System.ExtrinsicFailed` on the outer extrinsic
+      - no `Sudo.Sudid { sudo_result: Err(..) }` on the inner root call
     """
     block = iface.get_block(block_hash=block_hash, include_author=False)
     if block is None:
@@ -324,9 +352,18 @@ def _fetch_extrinsic_dispatch_error(
         event = v.get("event") or v
         module_id = event.get("module_id") or event.get("pallet")
         event_id = event.get("event_id") or event.get("variant") or event.get("name")
+        attrs = event.get("attributes") or event.get("fields") or {}
         if module_id == "System" and event_id == "ExtrinsicFailed":
-            attrs = event.get("attributes") or event.get("fields") or {}
             return f"Module(ExtrinsicFailed, attrs={attrs!r})"
+        if module_id == "Sudo" and event_id == "Sudid":
+            if isinstance(attrs, dict):
+                sudo_result = attrs.get("sudo_result")
+            elif isinstance(attrs, (list, tuple)) and attrs:
+                sudo_result = attrs[0]
+            else:
+                sudo_result = attrs
+            if _is_err_variant(sudo_result):
+                return f"Module(Sudid, attrs={attrs!r})"
     return None
 
 
@@ -334,20 +371,13 @@ def _build_hybrid_signed_extrinsic(
     *,
     iface: SubstrateInterface,
     signer: _HybridSigner,
-    call_module: str,
-    call_function: str,
-    call_params: dict,
+    call,
 ) -> Tuple[bytes, str]:
     """Construct a hybrid-signed v4 extrinsic byte-by-byte.
 
     Mirrors `shared/substrate_client._build_hybrid_signed_extrinsic`. See
     that function's docstring for the full layout reference.
     """
-    call = iface.compose_call(
-        call_module=call_module,
-        call_function=call_function,
-        call_params=call_params,
-    )
     raw_call = call.data.data if hasattr(call.data, "data") else call.data
     if hasattr(raw_call, "tobytes"):
         call_bytes = bytes(raw_call)
@@ -466,7 +496,7 @@ def _chain_uses_hybrid_signature(iface: SubstrateInterface) -> bool:
 
 
 class SubstrateFaucet:
-    """HTTP service that signs `Balances.transfer_keep_alive` extrinsics."""
+    """HTTP service that signs `Sudo.sudo(FaucetOps.mint)` extrinsics."""
 
     def __init__(self, config: FaucetConfig) -> None:
         self.config = config
@@ -710,34 +740,41 @@ class SubstrateFaucet:
                 self._reconnect_iface()
         raise RuntimeError("unreachable: retry loop exhausted")
 
-    def _submit_sr25519_transfer(self, *, dest: str, amount: int):
-        call = self._iface.compose_call(
-            call_module="Balances",
-            call_function="transfer_keep_alive",
-            call_params={"dest": dest, "value": amount},
-        )
+    def _submit_sr25519_transfer(self, *, dest: str, amount: int) -> dict:
+        call = _compose_sudo_mint_call(self._iface, dest=dest, amount=amount)
         extrinsic = self._iface.create_signed_extrinsic(
             call=call, keypair=self._sr_keypair
         )
-        return self._iface.submit_extrinsic(
+        receipt = self._iface.submit_extrinsic(
             extrinsic, wait_for_inclusion=True
         )
+        ext_hash = str(getattr(receipt, "extrinsic_hash", "") or "")
+        block_hash = str(getattr(receipt, "block_hash", "") or "")
+        if not block_hash:
+            raise RuntimeError(
+                "sr25519 extrinsic missing block hash "
+                f"(ext_hash={ext_hash})"
+            )
+        error = _fetch_extrinsic_dispatch_error(
+            self._iface, block_hash=block_hash, ext_hash=ext_hash
+        )
+        if error:
+            raise RuntimeError(f"sr25519 extrinsic dispatch failed: {error}")
+        return {"extrinsic_hash": ext_hash, "block_hash": block_hash}
 
     def _submit_hybrid_transfer(self, *, dest: str, amount: int) -> dict:
-        """Build + submit a hybrid-signed transfer, wait for in-block.
+        """Build + submit a hybrid-signed faucet mint, wait for in-block.
 
-        Returns a dict with `extrinsic_hash`, `block_hash`, and (on
-        dispatch failure) `error`. Raises `RuntimeError` for any
-        terminal pool status (`dropped` / `invalid` / `usurped` /
-        `retracted` / `finalityTimeout`) so the HTTP caller gets a
-        useful 502 instead of a silent hang.
+        Returns a dict with `extrinsic_hash` and `block_hash`. Raises
+        `RuntimeError` for any terminal pool status (`dropped` /
+        `invalid` / `usurped` / `retracted` / `finalityTimeout`) so
+        the HTTP caller gets a useful 502 instead of a silent hang.
         """
+        call = _compose_sudo_mint_call(self._iface, dest=dest, amount=amount)
         ext_bytes, ext_hash = _build_hybrid_signed_extrinsic(
             iface=self._iface,
             signer=self._hybrid_signer,
-            call_module="Balances",
-            call_function="transfer_keep_alive",
-            call_params={"dest": dest, "value": amount},
+            call=call,
         )
         ext_hex = "0x" + ext_bytes.hex()
 
