@@ -2,13 +2,15 @@
 
 Standalone dev faucet for [Quip Network](https://gitlab.com/quip.network)
 substrate chains. Listens on HTTP and submits
-`Balances.transfer_keep_alive` extrinsics from a single funded account
+`Sudo.sudo(FaucetOps.mint)` extrinsics from a single funded account
 (typically `//Alice` on a dev chain) to whichever destination is
 requested. Per-destination rate-limited.
 
-The bot is a verbatim deployable copy of `faucet_bot.py` from the
+The bot is a deployable copy of `faucet_bot.py` from the
 [`quip-protocol`](https://gitlab.com/quip.network/quip-protocol) project,
-which authorizes standalone redistribution from its module docstring.
+adapted to mint through the root-only `FaucetOps` pallet by wrapping each
+request in `Sudo.sudo(...)`. The configured faucet key therefore needs to be
+the chain's sudo/dev key.
 
 Used by [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 as the `faucet` profile in its docker-compose stack.
