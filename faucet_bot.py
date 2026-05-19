@@ -142,6 +142,7 @@ logger = logging.getLogger("faucet_bot")
 class FaucetConfig:
     node_url: str
     faucet_key_uri: str = "//Alice"
+    hybrid_master_seed_hex: Optional[str] = None
     listen_host: str = "127.0.0.1"
     listen_port: int = 8087
     # Float so tests + CLI can pass sub-second values without an implicit
@@ -572,6 +573,13 @@ class SubstrateFaucet:
         """Resolve the configured funder URI to the right signer type."""
         uri = self.config.faucet_key_uri
         if self._is_hybrid:
+            if self.config.hybrid_master_seed_hex:
+                seed_hex = self.config.hybrid_master_seed_hex.removeprefix("0x")
+                self._hybrid_signer = _HybridSigner(bytes.fromhex(seed_hex))
+                self._funder_address = self._hybrid_signer.ss58_address()
+                # Logged so deploys can confirm the derived account ID.
+                logger.info("hybrid funder address: %s", self._funder_address)
+                return
             if uri not in DEV_HYBRID_SEEDS:
                 raise RuntimeError(
                     f"hybrid chain requires a known dev URI for the funder "
@@ -949,6 +957,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Allow running against non-dev chains. UNSAFE.",
     )
     parser.add_argument(
+        "--hybrid-master-seed-hex",
+        default=os.environ.get("QUIP_FAUCET_HYBRID_MASTER_SEED_HEX"),
+        help=(
+            "32-byte master seed hex for hybrid chains; bypasses the "
+            "DEV_HYBRID_SEEDS table and lets the faucet sign for an "
+            "arbitrary funded account."
+        ),
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
@@ -991,6 +1008,7 @@ def main(argv: Optional[list] = None) -> int:
     config = FaucetConfig(
         node_url=args.node_url,
         faucet_key_uri=args.faucet_key,
+        hybrid_master_seed_hex=args.hybrid_master_seed_hex,
         listen_host=args.listen,
         listen_port=args.port,
         rate_limit_seconds=args.rate_limit_seconds,
