@@ -1,0 +1,125 @@
+---
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Akash SDL v2.0 for faucet.testnet.quip.network (Phase B redeploy).
+#
+# Two services in one deployment:
+#   - faucet: upstream quip-faucet binary signing Sudo.sudo(FaucetOps.mint)
+#     against op-1's hybrid mnemonic. No internal quipnode — RPC goes to
+#     the public bootnode endpoints over WSS.
+#   - caddy:  public-facing TLS terminator + reverse proxy (443 global).
+#     /certs is ephemeral — every caddy pod restart re-issues against the
+#     certifier (1-cert/hour-per-domain throttle gates back-to-back restarts).
+#     Persistent storage was tried first (beta2) but suppressed all bids;
+#     if cert-loss-on-restart becomes a real problem, switch to Tarsnap-as-
+#     source-of-truth (same pattern as pad.quip.network) or revisit
+#     persistent storage with a wider provider set.
+#
+# Secrets to fill before submitting (search for `<...>`):
+#   <operator-1-master-seed-hex>     0x + 64 hex; derive locally from op-1's
+#                                    mnemonic (Proton Pass) — see
+#                                    deploy/akash/README.md "derive master
+#                                    seed". This is the chain sudo key since
+#                                    faucet calls Sudo.sudo(FaucetOps.mint).
+#   <certifier-token-faucet>         from certifier.quip.network admin for
+#                                    faucet.testnet.quip.network (the old
+#                                    token from the v1 deploy is still valid
+#                                    if not revoked; otherwise mint fresh)
+#
+# Both images are anonymously pullable from registry.gitlab.com — do NOT
+# add a credentials: block with placeholder strings (memory:
+# akash-credentials-no-anonymous-fallback).
+
+version: "2.0"
+
+endpoints:
+  faucet-ip:
+    kind: ip
+
+services:
+  faucet:
+    # Patched faucet image — adds --hybrid-master-seed-hex (and the
+    # QUIP_FAUCET_HYBRID_MASTER_SEED_HEX env equivalent) so the funder
+    # can be op-1's real hybrid account, not just the //Alice/Bob/Charlie
+    # dev URIs the upstream main hardcodes. Built from deploy/testnet-akash
+    # branch (faucet_bot.py edit; not a fork — see deploy/akash/README.md).
+    image: registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1
+    args:
+      # Public RPC of bootnode-1 (Phase A). substrate-interface accepts
+      # wss:// URLs with paths; the bootnodes' Caddy reverse-proxies /rpc
+      # to substrate's loopback JSON-RPC. WSS works because the cert is
+      # trusted (Let's Encrypt via dnsimple-certifier).
+      - --node-url=wss://bootnode-1.testnet.quip.network:20049/rpc
+      # --faucet-key is required by argparse but its value is ignored
+      # on hybrid chains when QUIP_FAUCET_HYBRID_MASTER_SEED_HEX is set
+      # (see _init_funder in the patched faucet_bot.py).
+      - --faucet-key=//placeholder
+      - --listen=0.0.0.0
+      - --port=8087
+      - --rate-limit-seconds=60
+      # Quip Testnet's chain name isn't in the upstream dev-chain
+      # whitelist, so the safety check rejects it unless overridden.
+      # Acceptable here — testnet is the explicit target.
+      - --allow-any-chain
+      - --log-level=INFO
+    env:
+      # 32-byte master seed (0x + 64 hex) derived from op-1's mnemonic.
+      # Derive locally before submitting — see deploy/akash/README.md.
+      - QUIP_FAUCET_HYBRID_MASTER_SEED_HEX=<operator-1-master-seed-hex>
+    expose:
+      - port: 8087
+        as: 8087
+        to:
+          - service: caddy
+
+  caddy:
+    image: registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-1
+    env:
+      - QUIP_HOSTNAME=faucet.testnet.quip.network
+      - FAUCET_UPSTREAM=faucet:8087
+      - CERTIFIER_HOSTNAME=certifier.quip.network:9443
+      - CERTIFIER_TOKEN=<certifier-token-faucet>
+    expose:
+      - port: 443
+        as: 443
+        to:
+          - global: true
+            ip: faucet-ip
+
+profiles:
+  compute:
+    faucet:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 384Mi
+        storage:
+          - size: 1Gi
+    caddy:
+      resources:
+        cpu:
+          units: 0.2
+        memory:
+          size: 128Mi
+        storage:
+          - size: 256Mi
+  placement:
+    dcloud:
+      pricing:
+        faucet:
+          denom: uact
+          amount: 1000
+        caddy:
+          denom: uact
+          amount: 1000
+
+deployment:
+  faucet:
+    dcloud:
+      profile: faucet
+      count: 1
+  caddy:
+    dcloud:
+      profile: caddy
+      count: 1

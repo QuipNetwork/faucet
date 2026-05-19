@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Caddy config for faucet.testnet.quip.network on Akash.
+# Single-domain reverse-proxy to the faucet service in the same deployment.
+# TLS certs come from dnsimple-certifier (DNS-01) and live on a persistent
+# Akash volume mounted at /certs — survives caddy pod restarts so we don't
+# burn the certifier's 1-cert/hour-per-domain throttle on every cold start.
+#
+# Env-injected by caddy-entrypoint.sh before exec:
+#   QUIP_HOSTNAME    e.g. faucet.testnet.quip.network
+#   CERT_FILE        /certs/<host>/fullchain.pem
+#   KEY_FILE         /certs/<host>/privkey.pem
+#   FAUCET_UPSTREAM  service:port pair (faucet:8087)
+
+{
+	# admin on localhost only — needed for `caddy reload` after cert renewal.
+	# 443 is the only port published globally; admin stays internal.
+	admin localhost:2019
+	auto_https off
+}
+
+{$QUIP_HOSTNAME}:443 {
+	tls {$CERT_FILE} {$KEY_FILE}
+
+	# All paths (/request, /health) route to the faucet.
+	reverse_proxy {$FAUCET_UPSTREAM}
+}
