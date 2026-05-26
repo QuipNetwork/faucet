@@ -45,21 +45,37 @@ else
     : "${CERTIFIER_HOSTNAME:?CERTIFIER_HOSTNAME required when not MOCK_CERTIFIER}"
     : "${CERTIFIER_TOKEN:?CERTIFIER_TOKEN required when not MOCK_CERTIFIER}"
     log "issuing cert for ${QUIP_HOSTNAME} via ${CERTIFIER_HOSTNAME}"
-    SCRATCH="$(mktemp -d)"
-    if certifier issue --domain "${QUIP_HOSTNAME}" --out "${SCRATCH}/"; then
-        # certifier writes <domain>.crt (leaf+chain) + <domain>.key.
-        # Don't concat with .issuer.crt — memory: dnsimple-certifier-cert-format.
-        cp "${SCRATCH}/${QUIP_HOSTNAME}.crt" "${CERT_FILE}"
-        cp "${SCRATCH}/${QUIP_HOSTNAME}.key" "${KEY_FILE}"
-        chmod 644 "${CERT_FILE}"
-        chmod 600 "${KEY_FILE}"
-        log "cert installed at ${CERT_FILE}"
-    else
-        log "ERROR: certifier issue failed for ${QUIP_HOSTNAME}"
+    # Retry on failure rather than exit. Akash containers can restart and
+    # ephemeral /certs is wiped, so a transient certifier 429/403/500 must
+    # not leave caddy fatally down. The loop never gives up — caddy exec
+    # happens only after the cert is in hand. Mirrors the bootnodes'
+    # caddy-rpc-bringup.sh retry behavior.
+    attempt=0
+    while true; do
+        attempt=$((attempt + 1))
+        SCRATCH="$(mktemp -d)"
+        if certifier issue --domain "${QUIP_HOSTNAME}" --out "${SCRATCH}/"; then
+            cp "${SCRATCH}/${QUIP_HOSTNAME}.crt" "${CERT_FILE}"
+            cp "${SCRATCH}/${QUIP_HOSTNAME}.key" "${KEY_FILE}"
+            chmod 644 "${CERT_FILE}"
+            chmod 600 "${KEY_FILE}"
+            log "cert installed at ${CERT_FILE} (attempt ${attempt})"
+            rm -rf "${SCRATCH}"
+            break
+        fi
         rm -rf "${SCRATCH}"
-        exit 1
-    fi
-    rm -rf "${SCRATCH}"
+        # Backoff: 6 × 5min (covers per-domain 1h cooldown),
+        # then 6 × 30min, then 1h indefinitely.
+        if [ "${attempt}" -lt 6 ]; then
+            sleep_for=300
+        elif [ "${attempt}" -lt 12 ]; then
+            sleep_for=1800
+        else
+            sleep_for=3600
+        fi
+        log "cert issue failed (attempt ${attempt}); retrying in ${sleep_for}s"
+        sleep "${sleep_for}"
+    done
 fi
 
 # ── Renewal loop (12h, real certifier only) ─────────────────────────────────
