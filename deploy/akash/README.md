@@ -4,7 +4,15 @@ Deployment artifacts for the post-`v1`-teardown faucet, using:
 
 - **Patched faucet image built from `deploy/testnet-akash` branch**: `registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1`. Same code as `main` (1cd4ff1) plus a small 3-edit patch to `faucet_bot.py` that adds `--hybrid-master-seed-hex` (and `QUIP_FAUCET_HYBRID_MASTER_SEED_HEX` env) so the funder can be op-1's real hybrid account, not just the `//Alice` / `//Bob` / `//Alice//stash` dev URIs that the upstream `DEV_HYBRID_SEEDS` table hardcodes. Patch source: `faucet_bot.py` diff vs `main` on this branch.
 - **Public bootnode RPC** (no internal `quipnode`): `wss://bootnode-1.testnet.quip.network:20049/rpc` — added in [`bootnodes.quip.network`](https://gitlab.com/quip-infra/bootnodes.quip.network) v0.2-preview-2.
-- **Ephemeral `/certs`** — same as v1. Persistent storage (beta2) was tried first and suppressed all bids; reverting kept the deploy schedulable. If cert-loss-on-restart becomes a real problem in steady-state, fall back to Tarsnap (same pattern as `pad.quip.network`) before retrying persistent storage with a wider provider set.
+- **Tarsnap-backed cert persistence** (caddy image `:caddy-deploy-testnet-akash-3` onwards). `/certs` is still ephemeral, but the entrypoint restores the cert dir from the latest matching Tarsnap archive on every boot and exec's caddy without ever calling the certifier. The 12h renewal loop is the *only* certifier caller; on successful renewal it pushes a fresh archive and prunes to the 10 most recent. Decouples container restarts from certifier rate-limit risk — the structural cause of the 2026-05-28 outage. Same pattern as `pad.quip.network`.
+
+## Cert persistence: recovery story
+
+Container restart (Akash pod kill, provider migration, lease churn): the entrypoint runs `tarsnap --fsck` → `tarsnap --list-archives | grep "^testnet-caddy-faucet-" | sort -r | head -1` → `tarsnap -x -f $LATEST -C /` → cert validity check (`openssl x509 -checkend 86400` + SAN match) → `exec caddy run`. No certifier call. Recovery is bounded by `--fsck` + extract time (single-digit seconds at this archive size). The 12h renewal loop then resumes on its existing schedule.
+
+If the validity check fails (cert expired or hostname mismatch), the entrypoint fatal-exits with a documented message and the operator re-seeds Tarsnap from a laptop using the same procedure as the first cutover. The Caddy container will restart-loop in the meantime — better than serving a stale cert.
+
+Refusing to seed a first archive (operator hasn't run the one-time setup yet) also fatal-exits with a clear error. See the design spec at `quipnetwork/docs/superpowers/specs/2026-05-29-testnet-cert-persistence-design.md` for the full flow and the one-time-setup procedure.
 
 ## Files
 
