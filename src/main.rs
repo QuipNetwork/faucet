@@ -1,14 +1,15 @@
 //! Concurrent dev faucet for Quip substrate chains.
 //!
-//! tokio + jsonrpsee (multiplexed RPC, no global lock) + per-account nonce lanes,
-//! reusing the Quip runtime/crypto/client crates so the wire format never drifts.
+//! tokio + jsonrpsee (multiplexed RPC, no global lock), reusing the Quip
+//! runtime/crypto/client crates so the wire format never drifts. The `/sign`
+//! pool accounts are dedicated to the faucet; the funder (chain sudo key) may be
+//! a shared, active account, so sudo submissions fetch the nonce fresh + retry.
 
 mod calls;
 mod chain;
 mod config;
 mod gate;
 mod handlers;
-mod nonce;
 mod pool;
 mod signer;
 
@@ -29,7 +30,6 @@ use crate::{
     chain::ChainClient,
     config::Config,
     gate::Gate,
-    nonce::NonceLane,
     pool::{Pool, PoolAccount},
     signer::Funder,
 };
@@ -42,7 +42,6 @@ pub struct AppState {
     pub cfg: Config,
     pub chain: ChainClient,
     pub funder: Funder,
-    pub funder_nonce: NonceLane,
     pub gate: Gate,
     pub pool: Pool,
 }
@@ -65,7 +64,6 @@ async fn main() -> Result<()> {
         cfg.allow_any_chain,
     )
     .await?;
-    let funder_next = chain.next_index(&funder.account).await?;
 
     let gate = Gate::new(
         cfg.lenient_window(),
@@ -79,7 +77,6 @@ async fn main() -> Result<()> {
         cfg,
         chain,
         funder,
-        funder_nonce: NonceLane::new(funder_next),
         gate,
         pool,
     });
@@ -161,11 +158,10 @@ async fn ensure_pool_account(state: &Arc<AppState>, index: u32) -> Result<()> {
 
 /// Sudo-mint `pool_fund_amount` to `account` and wait until it is on-chain.
 async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> {
-    let nonce = state.funder_nonce.allocate();
     let call = calls::sudo_mint(account.clone(), state.cfg.pool_fund_amount);
     state
         .chain
-        .submit(&state.funder.pair, call, nonce)
+        .submit_funder(&state.funder.pair, &state.funder.account, call)
         .await
         .context("funding pool account")?;
     for _ in 0..30 {

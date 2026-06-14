@@ -101,16 +101,18 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
         return resp;
     }
 
-    // Allowed + reserved. Pipeline the sudo-mint via the funder nonce lane.
-    let nonce = state.funder_nonce.allocate();
+    // Allowed + reserved. Sudo-mint with a fresh funder nonce (+ stale retry).
     let call = calls::sudo_mint(account, amount);
-    let result = state.chain.submit(&state.funder.pair, call, nonce).await;
+    let result = state
+        .chain
+        .submit_funder(&state.funder.pair, &state.funder.account, call)
+        .await;
     state.gate.release(&key);
 
     match result {
         Ok(hash) => {
             state.gate.commit(&key);
-            info!("funded {key} amount={amount} nonce={nonce}");
+            info!("funded {key} amount={amount}");
             reply(
                 StatusCode::OK,
                 json!({ "extrinsic_hash": format_hash(&hash), "amount": amount, "dest": req.dest }),
@@ -118,10 +120,6 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
         }
         Err(submit_err) => {
             error!("/request submit failed: {submit_err:#}");
-            // Resync the lane so a failed nonce doesn't gap-stall later mints.
-            if let Ok(next) = state.chain.next_index(&state.funder.account).await {
-                state.funder_nonce.resync(next);
-            }
             err(StatusCode::BAD_GATEWAY, "transfer failed; see faucet logs")
         }
     }
@@ -181,6 +179,7 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
                     "from": allocated.account.to_ss58check(),
                     "amount": amount,
                     "dest": req.dest,
+                    "mode": "hybrid",
                 }),
             )
         }

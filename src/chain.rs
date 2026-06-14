@@ -4,9 +4,12 @@
 //! multi-node failover and a cached chain context. jsonrpsee multiplexes
 //! concurrent requests over one connection, so there is no global lock.
 
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
 };
 
 use anyhow::{bail, Context, Result};
@@ -95,16 +98,43 @@ impl ChainClient {
         Ok(())
     }
 
-    /// Build + sign `call` from `signer` with `nonce` and submit fire-and-forget
-    /// (`author_submitExtrinsic`). No failover retry: resubmitting a possibly-
-    /// landed tx could double-fund.
-    pub async fn submit(&self, signer: &HybridPair, call: RuntimeCall, nonce: u32) -> Result<Hash> {
-        let mut ctx = *self.base_ctx.read();
-        ctx.nonce = nonce;
-        let extrinsic = build_signed_extrinsic(signer, call, ctx);
-        let bytes = encode_extrinsic(&extrinsic);
-        let client = self.client();
-        submit_extrinsic(&client, &bytes).await
+    /// Submit a sudo/funder extrinsic, fetching the funder nonce fresh each try and
+    /// retrying on a stale-nonce rejection. The funder (chain sudo key) may be a
+    /// shared, active account, so a cached/lane nonce goes stale — fetch-fresh +
+    /// retry is the correct model. Fire-and-forget (`author_submitExtrinsic`);
+    /// not failed over (resubmitting a possibly-landed tx could double-fund).
+    pub async fn submit_funder(
+        &self,
+        signer: &HybridPair,
+        account: &AccountId,
+        call: RuntimeCall,
+    ) -> Result<Hash> {
+        let mut last_err = String::new();
+        for attempt in 0..5 {
+            let nonce = self.next_index(account).await?;
+            let mut ctx = *self.base_ctx.read();
+            ctx.nonce = nonce;
+            let extrinsic = build_signed_extrinsic(signer, call.clone(), ctx);
+            let bytes = encode_extrinsic(&extrinsic);
+            let client = self.client();
+            match submit_extrinsic(&client, &bytes).await {
+                Ok(hash) => return Ok(hash),
+                Err(err) => {
+                    let msg = format!("{err:#}");
+                    let stale = msg.contains("outdated")
+                        || msg.contains("Stale")
+                        || msg.contains("Priority is too low");
+                    if stale && attempt < 4 {
+                        warn!("funder nonce stale (attempt {attempt}); refetching");
+                        last_err = msg;
+                        tokio::time::sleep(Duration::from_millis(300)).await;
+                        continue;
+                    }
+                    return Err(err).context("submitting funder extrinsic");
+                }
+            }
+        }
+        bail!("funder submit stale after retries: {last_err}")
     }
 
     /// Build + sign `call` from `signer` with `nonce` WITHOUT submitting; returns
