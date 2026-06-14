@@ -1,3 +1,9 @@
+# Pinned to the exact rustc the quip-protocol-rs runtime is validated against and
+# that the CI toolchain image (carback1/rust-substrate-builder) ships as default.
+# `substrate-wasm-builder` builds the runtime blob with the tree's active
+# toolchain, and floating `stable` drifts off this validated version — a newer
+# rustc changes wasm32v1-none self-contained linking so sp-io host functions stop
+# lowering to wasm imports (link error: `undefined symbol: ext_*`).
 [toolchain]
-channel = "stable"
+channel = "1.95.0"
 components = ["rustfmt", "clippy"]
