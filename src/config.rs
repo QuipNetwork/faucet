@@ -1,0 +1,83 @@
+//! CLI configuration.
+
+use std::time::Duration;
+
+use clap::Parser;
+
+/// Default funding amount: 1000 UNIT on 12-decimal chains.
+pub const DEFAULT_AMOUNT_PLANCKS: u128 = 1_000_000_000_000_000;
+
+#[derive(Parser, Debug, Clone)]
+#[command(
+    name = "quip-faucet",
+    about = "Concurrent dev faucet for Quip substrate chains"
+)]
+pub struct Config {
+    /// Substrate node WebSocket URL. Repeat to add ordered failover nodes.
+    #[arg(long = "node-url", required = true)]
+    pub node_urls: Vec<String>,
+
+    /// Funder SURI (the chain sudo key). Pool accounts derive from it.
+    #[arg(long, default_value = "//Alice", env = "QUIP_FAUCET_FAUCET_KEY")]
+    pub faucet_key: String,
+
+    #[arg(long, default_value = "127.0.0.1")]
+    pub listen_host: String,
+    #[arg(long, default_value_t = 8087)]
+    pub port: u16,
+
+    /// Default funding amount in plancks (overridable per request).
+    #[arg(long, default_value_t = DEFAULT_AMOUNT_PLANCKS)]
+    pub amount: u128,
+
+    /// Deny when the destination's free balance exceeds this (0 => any funds).
+    #[arg(long, default_value_t = 0)]
+    pub max_funded_balance: u128,
+
+    /// Strict fallback window per destination (used when the balance query fails).
+    #[arg(long, default_value_t = 60.0)]
+    pub rate_limit_seconds: f64,
+    /// Lenient window for confirmed-empty destinations (>= block time).
+    #[arg(long, default_value_t = 5.0)]
+    pub lenient_rate_limit_seconds: f64,
+    /// On a balance-query failure, deny (503) instead of falling back to strict.
+    #[arg(long, default_value_t = false)]
+    pub balance_query_fail_closed: bool,
+
+    #[arg(long, default_value_t = 8)]
+    pub pool_size: u32,
+    #[arg(long, default_value_t = 64)]
+    pub pool_max_size: u32,
+    #[arg(long, default_value_t = 100 * DEFAULT_AMOUNT_PLANCKS)]
+    pub pool_fund_amount: u128,
+    #[arg(long, default_value_t = 10 * DEFAULT_AMOUNT_PLANCKS)]
+    pub pool_low_watermark: u128,
+    #[arg(long, default_value_t = 20.0)]
+    pub pool_cooldown_seconds: f64,
+    #[arg(long, default_value_t = 30.0)]
+    pub pool_replenish_interval_seconds: f64,
+    #[arg(long, default_value_t = 30.0)]
+    pub pool_idle_grow_seconds: f64,
+
+    /// Allow running against non-dev chains (skips the startup name guard). UNSAFE.
+    #[arg(long, default_value_t = false)]
+    pub allow_any_chain: bool,
+}
+
+impl Config {
+    pub fn lenient_window(&self) -> Duration {
+        Duration::from_secs_f64(self.lenient_rate_limit_seconds)
+    }
+    pub fn strict_window(&self) -> Duration {
+        Duration::from_secs_f64(self.rate_limit_seconds)
+    }
+    pub fn pool_cooldown(&self) -> Duration {
+        Duration::from_secs_f64(self.pool_cooldown_seconds)
+    }
+    pub fn idle_grow(&self) -> Duration {
+        Duration::from_secs_f64(self.pool_idle_grow_seconds)
+    }
+    pub fn balance_query_fail_open(&self) -> bool {
+        !self.balance_query_fail_closed
+    }
+}
