@@ -11,3 +11,5 @@ venv/
 
 # Rust
 /target/
+# Release binary staged at the repo root for the COPY-only Docker build.
+/quip-faucet

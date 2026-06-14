@@ -79,12 +79,15 @@ allow-any-chain override).
 
 ## Run in Docker
 
+The published image (`registry.gitlab.com/quip.network/faucet`, linux/amd64)
+runs the Rust faucet binary. Flags map directly to its CLI (`--help`):
+
 ```bash
 docker run --rm -p 8087:8087 \
     registry.gitlab.com/quip.network/faucet:latest \
     --node-url=ws://host.docker.internal:9944 \
     --faucet-key=//Alice \
-    --listen=0.0.0.0 \
+    --listen-host=0.0.0.0 \
     --port=8087
 ```
 
@@ -148,8 +151,13 @@ cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 
 The HTTP API (`/request`, `/sign`, `/health`) and behavior (balance gate, two-tier
 rate limiting, multi-node failover, pool growth) match the Python faucet documented
-above. Once it reaches parity against a node, `faucet_bot.py` and its Python tooling
-are removed and the Docker/CI swap to `Dockerfile.rust`.
+above.
+
+The published image now runs this Rust binary. CI compiles it in the substrate
+toolchain image (`build-binary`) and kaniko packages the prebuilt binary into a
+slim Debian image (`publish-image`), linux/amd64 only — matching the
+quip-network-node image. `faucet_bot.py` and its Python tooling remain in the
+repo until the Rust faucet reaches parity against a node, then are removed.
 
 ## License
 
