@@ -128,6 +128,29 @@ pytest          # unit tests (mock the chain; no node required)
 ruff check . && ty check faucet_bot.py
 ```
 
+## Rust rewrite (in progress)
+
+A concurrent Rust faucet (`src/`, binary `quip-faucet`) is being stacked on top of
+the Python one. It exists to fix throughput under concurrent load: the Python
+faucet serializes every chain call behind one lock held across the inclusion wait,
+so it funds ~once per block. The Rust version uses tokio + jsonrpsee (multiplexed
+RPC, no global lock) and **per-account nonce lanes** so `/request` mints pipeline
+concurrently, and reuses the Quip runtime/crypto/client crates
+(`quip-protocol-runtime`, `quip-transaction-crypto`, `quip-tools`) so the extrinsic
+wire format can never drift from the chain. `/sign` is backed by the same
+deterministic, adaptive pool as the Python version.
+
+```bash
+# Needs SSH access to the private quip-protocol-rs repo (.cargo/config uses git-cli).
+cargo run --release -- --node-url ws://localhost:9944 --faucet-key //Alice
+cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
+The HTTP API (`/request`, `/sign`, `/health`) and behavior (balance gate, two-tier
+rate limiting, multi-node failover, pool growth) match the Python faucet documented
+above. Once it reaches parity against a node, `faucet_bot.py` and its Python tooling
+are removed and the Docker/CI swap to `Dockerfile.rust`.
+
 ## License
 
 AGPL-3.0-or-later. See `LICENSE`.

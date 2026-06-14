@@ -1,0 +1,5 @@
+# Use the system git (with the developer's SSH agent / credentials) to fetch the
+# private gitlab dependency. Without this, cargo's built-in git client can't
+# authenticate to the private quip-protocol-rs repo.
+[net]
+git-fetch-with-cli = true
