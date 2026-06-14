@@ -2,8 +2,8 @@
 
 Deployment artifacts for the post-`v1`-teardown faucet, using:
 
-- **Patched faucet image built from `deploy/testnet-akash` branch**: `registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1`. Same code as `main` (1cd4ff1) plus a small 3-edit patch to `faucet_bot.py` that adds `--hybrid-master-seed-hex` (and `QUIP_FAUCET_HYBRID_MASTER_SEED_HEX` env) so the funder can be op-1's real hybrid account, not just the `//Alice` / `//Bob` / `//Alice//stash` dev URIs that the upstream `DEV_HYBRID_SEEDS` table hardcodes. Patch source: `faucet_bot.py` diff vs `main` on this branch.
-- **Public bootnode RPC** (no internal `quipnode`): `wss://bootnode-1.testnet.quip.network:20049/rpc` — added in [`bootnodes.quip.network`](https://gitlab.com/quip-infra/bootnodes.quip.network) v0.2-preview-2.
+- **Upstream Rust faucet image**: `registry.gitlab.com/quip.network/faucet:latest` — the Rust binary published by the repo's CI (image cutover). It derives op-1's real hybrid account **natively** from the mnemonic via `HybridPair::from_string`, so there is no patched image and no master-seed derivation step. (The Python faucet needed both because `substrate-interface` could not ML-DSA-keygen an arbitrary mnemonic; it only had a hardcoded `DEV_HYBRID_SEEDS` table.) Pin `:sha-<short>` instead of `:latest` in `deploy.yaml` for a reproducible deploy.
+- **Public bootnode RPC** (no internal `quipnode`): `wss://bootnode-1.testnet.quip.network:20049/rpc` is primary, with `bootnode-2` / `bootnode-3` as ordered failover — the Rust faucet connects to the first reachable and fails over on transport errors. Added in [`bootnodes.quip.network`](https://gitlab.com/quip-infra/bootnodes.quip.network) v0.2-preview-2.
 - **Tarsnap-backed cert persistence** (caddy image `:caddy-deploy-testnet-akash-3` onwards). `/certs` is still ephemeral, but the entrypoint restores the cert dir from the latest matching Tarsnap archive on every boot and exec's caddy without ever calling the certifier. The 12h renewal loop is the *only* certifier caller; on successful renewal it pushes a fresh archive and prunes to the 10 most recent. Decouples container restarts from certifier rate-limit risk — the structural cause of the 2026-05-28 outage. Same pattern as `pad.quip.network`.
 
 ## Cert persistence: recovery story
@@ -17,10 +17,10 @@ Refusing to seed a first archive (operator hasn't run the one-time setup yet) al
 ## Files
 
 - [`deploy.yaml`](deploy.yaml) — Akash SDL v2.0 (2 services: faucet + caddy).
-- [`Dockerfile.caddy`](Dockerfile.caddy) — builds the caddy + dnsimple-certifier-client image (single image; no fork of the faucet).
+- [`Dockerfile.caddy`](Dockerfile.caddy) — builds the caddy + dnsimple-certifier-client image (single image; the faucet image is upstream, unmodified).
 - [`Caddyfile.template`](Caddyfile.template) — TLS reverse-proxy config (443 → faucet:8087).
-- [`caddy-entrypoint.sh`](caddy-entrypoint.sh) — cert-issue-or-skip, then `exec caddy run` with a 12h background renewal loop.
-- [`env.example`](env.example) — secrets reference (mnemonic, certifier token, caddy image tag).
+- [`caddy-entrypoint.sh`](caddy-entrypoint.sh) — cert restore-or-fail, then `exec caddy run` with a 12h background renewal loop.
+- [`env.example`](env.example) — secrets reference (op-1 mnemonic, certifier token).
 
 ## Build prep
 
@@ -34,56 +34,46 @@ cp -r ../../../dnsimple-certifier .   # vendored for build context; .gitignored
 ```sh
 cd deploy/akash
 docker build -f Dockerfile.caddy \
-    -t registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-1 .
-docker push registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-1
+    -t registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-3 .
+docker push registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-3
 ```
 
-## Build + push the patched faucet image
+## Faucet image
 
-The deploy/testnet-akash branch contains a 3-edit patch to faucet_bot.py (FaucetConfig field + _init_funder branch + CLI arg). The image is built from the standard repo-root Dockerfile.
+No build step — the deploy uses the upstream `registry.gitlab.com/quip.network/faucet:latest` image (the Rust binary, published by the repo's CI on every merge to `main`). Confirm it is anonymously pullable before submitting to Akash. To pin a specific build, replace `:latest` with `:sha-<short>` in `deploy.yaml`.
 
-```sh
-# from repo root, on branch deploy/testnet-akash
-docker build \
-    -t registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1 .
-docker push registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1
+## Funder key
+
+`QUIP_FAUCET_FAUCET_KEY` is op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid account from it directly — no derivation step. op-1 is the chain sudo key, so the faucet sudo-mints a dedicated base wallet on boot (and tops it up via `Sudo.sudo(FaucetOps.mint)`). A `0x` + 64-hex seed also works in that field. After deploy, confirm the funder identity in the faucet log:
+
+```
+funder: <ss58>        # must equal op-1's known sudo address
+base wallet: <ss58>
+pool ready: N accounts
 ```
 
-Verify both images are anonymously pullable via the GitLab JWT token-exchange flow before submitting to Akash.
-
-## Derive master seed for op-1
-
-The patched faucet expects the 32-byte master seed (not the BIP-39 mnemonic). Derive once locally; the value is static and can live in Proton Pass alongside the mnemonic.
-
-```sh
-docker run --rm --entrypoint /usr/local/bin/quip-network-node \
-    registry.gitlab.com/quip.network/quip-protocol-rs/quip-network-node:v0.2-preview \
-    key inspect "<paste-op-1-mnemonic>" --output-type json \
-    | jq -r .secretSeed
-```
-
-Paste the `0x...` output as `QUIP_FAUCET_HYBRID_MASTER_SEED_HEX` in `deploy.yaml`.
-
-## Smoke test (local)
+## Smoke test (caddy, local)
 
 ```sh
 docker run --rm -e MOCK_CERTIFIER=1 \
     -e QUIP_HOSTNAME=localhost \
     -e FAUCET_UPSTREAM=host.docker.internal:8087 \
     -p 8443:443 \
-    registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-1
+    registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-3
 # in another terminal:
 curl -k https://localhost:8443/health
 ```
 
-A full end-to-end smoke (faucet → bootnode RPC → on-chain mint) requires the actual `OPERATOR_1_MNEMONIC` and outbound access to the public bootnode RPC; not normally run from a dev machine — verify on Akash after deploy.
+A full end-to-end smoke (faucet → bootnode RPC → on-chain mint) requires op-1's
+real key and outbound access to the public bootnode RPC; not normally run from a
+dev machine — verify on Akash after deploy via the steps below.
 
 ## Deploy to Akash
 
-1. Fill in the 3 placeholders in `deploy.yaml`:
+1. Fill in the placeholders in `deploy.yaml`:
    - `<operator-1-mnemonic>` (Proton Pass)
    - `<certifier-token-faucet>` (Proton Pass — same hostname as v1, token still valid if not revoked)
-   - `<caddy-image-tag>` (the tag you just pushed)
+   - `<testnet-caddy-tarsnap-key-base64>` (Proton Pass: `TARSNAP_KEY_TESTNET_CADDY`, "base64" field)
 2. Submit via Akash console or `provider-services tx deployment create deploy.yaml`.
 3. Wait for bids, accept, lease starts.
 4. Note the public IP assigned to the `faucet-ip` endpoint.
@@ -96,29 +86,32 @@ echo | openssl s_client -connect faucet.testnet.quip.network:443 \
     | grep -E '(CONNECTION|Verification)'
 
 curl -sS https://faucet.testnet.quip.network/health
-# Expect: {"status": "ok"}
+# Expect: {"status":"ok"}
 
 # End-to-end drip (requires a fresh ss58 dest)
 curl -sS -X POST -H 'content-type: application/json' \
     --data '{"dest":"<ss58>","amount":1000000000000}' \
     https://faucet.testnet.quip.network/request | jq .
-# Expect: 200 {"extrinsic_hash":"0x…","block_hash":"0x…","amount":…,"dest":"…"}
+# Expect: 200 {"extrinsic_hash":"0x…","amount":…,"dest":"…"}
 
 # Verify on-chain inclusion via bootnode RPC
 curl -sS -X POST -H 'content-type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system_account_nextIndex\",\"params\":[\"<ss58>\"]}" \
     https://bootnode-1.testnet.quip.network:20049/rpc | jq .
 
-# Rate-limit check (within 60s of the drip above, same dest)
+# Re-request the same dest — once the mint is on-chain it has funds, so the
+# balance gate denies it (Goal 4).
 curl -i -X POST -H 'content-type: application/json' \
     --data '{"dest":"<ss58>","amount":1000000000000}' \
     https://faucet.testnet.quip.network/request
-# Expect: 429 with retry_after_seconds
+# Expect: 403 {"error":"destination already funded","free_balance_plancks":…}
+# (a rapid repeat to a still-empty dest instead returns 429 with retry_after_seconds)
 ```
 
 ## Known gotchas
 
 - **Akash provider routing** varies (memory: `statusdb_on_akash`). The v1 deploy's first bidder didn't route the metallb pool externally; we had to close and rebid. If the first provider's IP isn't reachable on 443 within ~5 min of lease start, close the deployment and rebid.
 - **Akash credentials block**: don't add `credentials:` with placeholder strings — the provider 401s and does NOT fall back to anonymous (memory: `akash_credentials_no_anonymous_fallback`). Both images are public; omit the block entirely.
-- **No persistent storage in this SDL** — we tried `beta2` first and got zero bids; reverted to ephemeral `/certs` so the deploy is schedulable. Caddy pod restarts re-issue the cert from the certifier (1-cert/hour throttle gates repeated cold-starts within that window).
+- **No persistent storage in this SDL** — we tried `beta2` first and got zero bids; reverted to ephemeral `/certs` so the deploy is schedulable. Cert persistence is Tarsnap-backed (see above), not Akash volumes.
 - **Cert-not-revoked assumption**: if the v1 certifier token for `faucet.testnet.quip.network` was revoked during v1 teardown, this deploy can't issue. Mint a fresh token via certifier admin before submitting.
+- **First boot mints a lot**: the faucet sudo-mints its base wallet to its target runway and funds the pool on first boot. That's expected — op-1 is sudo on testnet. Watch the startup log for `base wallet low … sudo-minting …` and `pool ready`.

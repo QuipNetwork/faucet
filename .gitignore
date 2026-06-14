@@ -13,3 +13,6 @@ venv/
 /target/
 # Release binary staged at the repo root for the COPY-only Docker build.
 /quip-faucet
+
+# Build context only — vendored from sibling repo for deploy/akash/Dockerfile.caddy
+deploy/akash/dnsimple-certifier/

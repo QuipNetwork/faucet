@@ -22,7 +22,7 @@
 {$QUIP_HOSTNAME}:443 {
 	# Per-request access log. Without it, successful requests have no
 	# client-IP record — Caddy only emits structured logs on errors,
-	# and faucet_bot's aiohttp log only sees Caddy's pod IP as peer.
+	# and the faucet's tracing log only sees Caddy's pod IP as peer.
 	log {
 		output stdout
 		format json
@@ -30,6 +30,6 @@
 
 	tls {$CERT_FILE} {$KEY_FILE}
 
-	# All paths (/request, /health) route to the faucet.
+	# All paths (/request, /sign, /health) route to the faucet.
 	reverse_proxy {$FAUCET_UPSTREAM}
 }

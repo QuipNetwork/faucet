@@ -4,9 +4,11 @@
 # Akash SDL v2.0 for faucet.testnet.quip.network (Phase B redeploy).
 #
 # Two services in one deployment:
-#   - faucet: upstream quip-faucet binary signing Sudo.sudo(FaucetOps.mint)
-#     against op-1's hybrid mnemonic. No internal quipnode — RPC goes to
-#     the public bootnode endpoints over WSS.
+#   - faucet: upstream Rust quip-faucet. Funder is op-1's hybrid account
+#     (the chain sudo key); on boot it sudo-mints a dedicated base wallet,
+#     funds a pool, and serves /request, /sign, /health. No internal
+#     quipnode — RPC goes to the public bootnode endpoints over WSS, with
+#     ordered failover.
 #   - caddy:  public-facing TLS terminator + reverse proxy (443 global).
 #     Cert dir at /certs is ephemeral, restored from Tarsnap on boot — the
 #     certifier is invoked ONLY from the 12h renewal loop. Mirrors the
@@ -15,11 +17,12 @@
 #     issue-on-boot design).
 #
 # Secrets to fill before submitting (search for `<...>`):
-#   <operator-1-master-seed-hex>     0x + 64 hex; derive locally from op-1's
-#                                    mnemonic (Proton Pass) — see
-#                                    deploy/akash/README.md "derive master
-#                                    seed". This is the chain sudo key since
-#                                    faucet calls Sudo.sudo(FaucetOps.mint).
+#   <operator-1-mnemonic>            op-1's BIP-39 phrase (Proton Pass). The
+#                                    Rust faucet derives op-1's hybrid account
+#                                    from it natively — no seed-derivation step.
+#                                    op-1 is the chain sudo key, so the faucet
+#                                    can sudo-mint its base wallet. A 0x + 64-hex
+#                                    seed works in this field too.
 #   <certifier-token-faucet>         from certifier.quip.network admin for
 #                                    faucet.testnet.quip.network (the old
 #                                    token from the v1 deploy is still valid
@@ -46,34 +49,37 @@ endpoints:
 
 services:
   faucet:
-    # Patched faucet image — adds --hybrid-master-seed-hex (and the
-    # QUIP_FAUCET_HYBRID_MASTER_SEED_HEX env equivalent) so the funder
-    # can be op-1's real hybrid account, not just the //Alice/Bob/Charlie
-    # dev URIs the upstream main hardcodes. Built from deploy/testnet-akash
-    # branch (faucet_bot.py edit; not a fork — see deploy/akash/README.md).
-    image: registry.gitlab.com/quip.network/faucet:faucet-deploy-testnet-akash-1
+    # Upstream Rust faucet — :latest is the Rust binary as of the image
+    # cutover. It derives op-1's real hybrid account natively from the
+    # mnemonic (HybridPair::from_string), so there is no patched image and no
+    # master-seed derivation step (the Python faucet needed both because
+    # substrate-interface could not ML-DSA-keygen an arbitrary mnemonic).
+    # Pin :sha-<short> instead of :latest for a reproducible deploy.
+    image: registry.gitlab.com/quip.network/faucet:latest
     args:
-      # Public RPC of bootnode-1 (Phase A). substrate-interface accepts
-      # wss:// URLs with paths; the bootnodes' Caddy reverse-proxies /rpc
-      # to substrate's loopback JSON-RPC. WSS works because the cert is
-      # trusted (Let's Encrypt via dnsimple-certifier).
+      # Ordered failover RPC endpoints: the faucet connects to the first
+      # reachable and sticks to it, failing over on transport errors. The
+      # bootnodes' Caddy reverse-proxies /rpc (path) to substrate's loopback
+      # JSON-RPC over a trusted WSS cert. bootnode-1 is primary; confirm the
+      # bootnode-2/3 ports before relying on failover (each bootnode's Caddy
+      # may expose a different port).
       - --node-url=wss://bootnode-1.testnet.quip.network:20049/rpc
-      # --faucet-key is required by argparse but its value is ignored
-      # on hybrid chains when QUIP_FAUCET_HYBRID_MASTER_SEED_HEX is set
-      # (see _init_funder in the patched faucet_bot.py).
-      - --faucet-key=//placeholder
-      - --listen=0.0.0.0
+      - --node-url=wss://bootnode-2.testnet.quip.network:20049/rpc
+      - --node-url=wss://bootnode-3.testnet.quip.network:20049/rpc
+      - --listen-host=0.0.0.0
       - --port=8087
       - --rate-limit-seconds=60
-      # Quip Testnet's chain name isn't in the upstream dev-chain
-      # whitelist, so the safety check rejects it unless overridden.
-      # Acceptable here — testnet is the explicit target.
+      # Quip Testnet's chain name isn't in the dev-chain whitelist, so the
+      # startup safety check rejects it unless overridden. Acceptable here —
+      # testnet is the explicit target.
       - --allow-any-chain
-      - --log-level=INFO
     env:
-      # 32-byte master seed (0x + 64 hex) derived from op-1's mnemonic.
-      # Derive locally before submitting — see deploy/akash/README.md.
-      - QUIP_FAUCET_HYBRID_MASTER_SEED_HEX=<operator-1-master-seed-hex>
+      # op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid
+      # account from it; op-1 is the chain sudo key, so base-wallet top-ups via
+      # Sudo.sudo(FaucetOps.mint) succeed. Verify after deploy: the startup log
+      # prints `funder: <ss58>` — confirm it equals op-1's known sudo address.
+      - QUIP_FAUCET_FAUCET_KEY=<operator-1-mnemonic>
+      - RUST_LOG=info
     expose:
       - port: 8087
         as: 8087
