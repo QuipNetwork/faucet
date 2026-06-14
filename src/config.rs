@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use clap::Parser;
 
-/// Default funding amount: 1000 UNIT on 12-decimal chains.
-pub const DEFAULT_AMOUNT_PLANCKS: u128 = 1_000_000_000_000_000;
+/// Default dispense per request: 10 UNIT on 12-decimal chains (ED is 0.001 UNIT
+/// and a transfer fee ~0.00076 UNIT, so this is ~13k transactions of headroom).
+pub const DEFAULT_AMOUNT_PLANCKS: u128 = 10_000_000_000_000;
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -59,6 +60,17 @@ pub struct Config {
     #[arg(long, default_value_t = 30.0)]
     pub pool_idle_grow_seconds: f64,
 
+    /// Top up the base wallet (via sudo) when its balance drops below this many
+    /// dispenses of runway (`base_balance < base_min_txns * amount`).
+    #[arg(long, default_value_t = 1000)]
+    pub base_min_txns: u64,
+    /// Top-up target for the base wallet, in dispenses (must exceed base-min-txns).
+    #[arg(long, default_value_t = 10_000)]
+    pub base_target_txns: u64,
+    /// Seconds between base-wallet balance checks / top-ups.
+    #[arg(long, default_value_t = 60.0)]
+    pub base_monitor_interval_seconds: f64,
+
     /// Allow running against non-dev chains (skips the startup name guard). UNSAFE.
     #[arg(long, default_value_t = false)]
     pub allow_any_chain: bool,
@@ -79,5 +91,17 @@ impl Config {
     }
     pub fn balance_query_fail_open(&self) -> bool {
         !self.balance_query_fail_closed
+    }
+    /// Top up the base wallet when its balance falls below this.
+    pub fn base_topup_threshold(&self) -> u128 {
+        self.amount.saturating_mul(u128::from(self.base_min_txns))
+    }
+    /// Refill the base wallet up to this on top-up.
+    pub fn base_topup_target(&self) -> u128 {
+        self.amount
+            .saturating_mul(u128::from(self.base_target_txns))
+    }
+    pub fn base_monitor_interval(&self) -> Duration {
+        Duration::from_secs_f64(self.base_monitor_interval_seconds)
     }
 }

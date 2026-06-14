@@ -101,11 +101,17 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
         return resp;
     }
 
-    // Allowed + reserved. Sudo-mint with a fresh funder nonce (+ stale retry).
-    let call = calls::sudo_mint(account, amount);
+    // Allowed + reserved. Transfer from the base wallet (its nonce lane lets these
+    // pipeline concurrently; sudo is only used to top the base wallet up).
+    let call = calls::transfer_keep_alive(account, amount);
     let result = state
         .chain
-        .submit_funder(&state.funder.pair, &state.funder.account, call)
+        .submit_lane(
+            &state.base.pair,
+            &state.base.account,
+            &state.base.nonce,
+            call,
+        )
         .await;
     state.gate.release(&key);
 

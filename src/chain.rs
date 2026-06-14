@@ -31,6 +31,8 @@ use sp_core::{
 };
 use tracing::warn;
 
+use crate::nonce::NonceLane;
+
 type AccountData = pallet_balances::AccountData<u128>;
 type AccountInfo = frame_system::AccountInfo<u32, AccountData>;
 
@@ -135,6 +137,45 @@ impl ChainClient {
             }
         }
         bail!("funder submit stale after retries: {last_err}")
+    }
+
+    /// Submit a transfer from the dedicated base wallet, drawing the nonce from its
+    /// lane (concurrent — the base wallet is faucet-only). On a stale rejection,
+    /// resync the lane from chain and retry. Fire-and-forget.
+    pub async fn submit_lane(
+        &self,
+        signer: &HybridPair,
+        account: &AccountId,
+        lane: &NonceLane,
+        call: RuntimeCall,
+    ) -> Result<Hash> {
+        let mut last_err = String::new();
+        for attempt in 0..5 {
+            let nonce = lane.allocate();
+            let mut ctx = *self.base_ctx.read();
+            ctx.nonce = nonce;
+            let extrinsic = build_signed_extrinsic(signer, call.clone(), ctx);
+            let bytes = encode_extrinsic(&extrinsic);
+            let client = self.client();
+            match submit_extrinsic(&client, &bytes).await {
+                Ok(hash) => return Ok(hash),
+                Err(err) => {
+                    let msg = format!("{err:#}");
+                    let stale = msg.contains("outdated")
+                        || msg.contains("Stale")
+                        || msg.contains("Priority is too low");
+                    if stale && attempt < 4 {
+                        let fresh = self.next_index(account).await?;
+                        lane.resync(fresh);
+                        last_err = msg;
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        continue;
+                    }
+                    return Err(err).context("submitting base transfer");
+                }
+            }
+        }
+        bail!("base submit stale after retries: {last_err}")
     }
 
     /// Build + sign `call` from `signer` with `nonce` WITHOUT submitting; returns

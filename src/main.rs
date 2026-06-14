@@ -1,15 +1,16 @@
 //! Concurrent dev faucet for Quip substrate chains.
 //!
 //! tokio + jsonrpsee (multiplexed RPC, no global lock), reusing the Quip
-//! runtime/crypto/client crates so the wire format never drifts. The `/sign`
-//! pool accounts are dedicated to the faucet; the funder (chain sudo key) may be
-//! a shared, active account, so sudo submissions fetch the nonce fresh + retry.
+//! runtime/crypto/client crates so the wire format never drifts. A dedicated base
+//! wallet (sudo-topped-up) funds /request and the pool via a nonce lane, so only
+//! rare top-ups touch the shared, contended sudo key.
 
 mod calls;
 mod chain;
 mod config;
 mod gate;
 mod handlers;
+mod nonce;
 mod pool;
 mod signer;
 
@@ -22,6 +23,7 @@ use axum::{
 };
 use clap::Parser;
 use quip_protocol_runtime::AccountId;
+use quip_transaction_crypto::HybridPair;
 use sp_core::crypto::Ss58Codec;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -30,6 +32,7 @@ use crate::{
     chain::ChainClient,
     config::Config,
     gate::Gate,
+    nonce::NonceLane,
     pool::{Pool, PoolAccount},
     signer::Funder,
 };
@@ -38,10 +41,19 @@ use crate::{
 /// runtime version; pool accounts must stay above it for `transfer_keep_alive`.
 const EXISTENTIAL_DEPOSIT_PLANCKS: u128 = 1_000_000_000;
 
+/// Dedicated hot wallet that funds users; sudo-topped-up, with a faucet-only nonce
+/// lane so `/request` and pool funding pipeline without touching the sudo key.
+pub struct BaseWallet {
+    pub pair: HybridPair,
+    pub account: AccountId,
+    pub nonce: NonceLane,
+}
+
 pub struct AppState {
     pub cfg: Config,
     pub chain: ChainClient,
     pub funder: Funder,
+    pub base: BaseWallet,
     pub gate: Gate,
     pub pool: Pool,
 }
@@ -65,6 +77,17 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Dedicated base wallet: sudo-topped-up, funds /request + pool via a nonce lane.
+    let (base_pair, base_account) = funder.derive_base()?;
+    info!("base wallet: {}", base_account.to_ss58check());
+    ensure_base_funded(&chain, &funder, &base_account, &cfg).await?;
+    let base_next = chain.next_index(&base_account).await?;
+    let base = BaseWallet {
+        pair: base_pair,
+        account: base_account,
+        nonce: NonceLane::new(base_next),
+    };
+
     let gate = Gate::new(
         cfg.lenient_window(),
         cfg.strict_window(),
@@ -77,6 +100,7 @@ async fn main() -> Result<()> {
         cfg,
         chain,
         funder,
+        base,
         gate,
         pool,
     });
@@ -84,6 +108,7 @@ async fn main() -> Result<()> {
     init_pool(&state).await?;
     spawn_refresh(Arc::clone(&state));
     spawn_replenish(Arc::clone(&state));
+    spawn_base_monitor(Arc::clone(&state));
 
     let app = Router::new()
         .route("/health", get(handlers::health))
@@ -156,14 +181,20 @@ async fn ensure_pool_account(state: &Arc<AppState>, index: u32) -> Result<()> {
     Ok(())
 }
 
-/// Sudo-mint `pool_fund_amount` to `account` and wait until it is on-chain.
+/// Fund `account` by transferring `pool_fund_amount` from the base wallet, and wait
+/// until it is on-chain.
 async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> {
-    let call = calls::sudo_mint(account.clone(), state.cfg.pool_fund_amount);
+    let call = calls::transfer_keep_alive(account.clone(), state.cfg.pool_fund_amount);
     state
         .chain
-        .submit_funder(&state.funder.pair, &state.funder.account, call)
+        .submit_lane(
+            &state.base.pair,
+            &state.base.account,
+            &state.base.nonce,
+            call,
+        )
         .await
-        .context("funding pool account")?;
+        .context("funding pool account from base")?;
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if state.chain.free_balance(account).await.unwrap_or(0) >= state.cfg.pool_fund_amount {
@@ -175,6 +206,53 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
         account.to_ss58check()
     );
     Ok(())
+}
+
+/// Ensure the base wallet has runway: if its balance is below the top-up threshold
+/// (cold start or drained), sudo-mint up to the target. Reused at startup and by
+/// the background monitor — the only place the contended sudo key is used.
+async fn ensure_base_funded(
+    chain: &ChainClient,
+    funder: &Funder,
+    base_account: &AccountId,
+    cfg: &Config,
+) -> Result<()> {
+    let balance = chain.free_balance(base_account).await?;
+    let threshold = cfg.base_topup_threshold();
+    if balance >= threshold {
+        return Ok(());
+    }
+    let target = cfg.base_topup_target();
+    let topup = target.saturating_sub(balance);
+    info!("base wallet low ({balance} < {threshold}); sudo-minting {topup} to reach {target}");
+    let call = calls::sudo_mint(base_account.clone(), topup);
+    chain
+        .submit_funder(&funder.pair, &funder.account, call)
+        .await
+        .context("topping up base wallet")?;
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if chain.free_balance(base_account).await.unwrap_or(0) >= threshold {
+            return Ok(());
+        }
+    }
+    warn!("base top-up not confirmed in 30s");
+    Ok(())
+}
+
+fn spawn_base_monitor(state: Arc<AppState>) {
+    let interval = state.cfg.base_monitor_interval();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            if let Err(err) =
+                ensure_base_funded(&state.chain, &state.funder, &state.base.account, &state.cfg)
+                    .await
+            {
+                warn!("base wallet monitor failed: {err:#}");
+            }
+        }
+    });
 }
 
 fn spawn_refresh(state: Arc<AppState>) {

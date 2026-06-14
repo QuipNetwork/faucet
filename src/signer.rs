@@ -32,4 +32,14 @@ impl Funder {
         let account = signer_account(&pair);
         Ok((pair, account))
     }
+
+    /// Derive the dedicated base (hot) wallet, `<funder>//faucet//base`. It is
+    /// funded by sudo and used to transfer to users — its nonce is not contended,
+    /// so a nonce lane gives `/request` concurrency without touching the sudo key.
+    pub fn derive_base(&self) -> Result<(HybridPair, AccountId)> {
+        let suri = format!("{}//faucet//base", self.suri);
+        let pair = pair_from_suri(&suri)?;
+        let account = signer_account(&pair);
+        Ok((pair, account))
+    }
 }
