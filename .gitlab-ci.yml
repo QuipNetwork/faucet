@@ -7,12 +7,59 @@
 # multi-arch manifest.
 
 stages:
+  - test
   - build
   - manifest
 
 variables:
   # → registry.gitlab.com/quip.network/faucet
   IMAGE: ${CI_REGISTRY_IMAGE}
+
+# Run on merge requests (so the Rust faucet is build-checked before it reaches
+# main), on main, and on tags. Non-main branch pushes without an MR get no
+# pipeline (avoids duplicate branch+MR pipelines).
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_TAG
+
+# ---------------------------------------------------------------------------
+# Rust faucet: fmt / clippy / test. Runs on every MR so a build break is caught
+# before merge (the publish jobs below only run on main + tags, where the repo
+# had no pre-merge signal). Uses the shared substrate toolchain image (rust +
+# clang/protoc/cmake + wasm target) because building quip-protocol-runtime runs
+# substrate-wasm-builder.
+# ---------------------------------------------------------------------------
+cargo-test:
+  stage: test
+  image: docker.io/carback1/rust-substrate-builder:latest
+  tags: [linux, amd64]
+  interruptible: true
+  timeout: 60m
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    CARGO_TERM_COLOR: always
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - target/
+  before_script:
+    # quip-protocol-runtime's build script runs substrate-wasm-builder.
+    - rustup target add wasm32v1-none
+    - rustup component add rust-src
+    # The faucet depends on the private quip-protocol-rs over ssh; in CI fetch it
+    # over https with the job token instead. Requires this project's CI_JOB_TOKEN
+    # to be allowed by quip-protocol-rs (Settings → CI/CD → Job token permissions).
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
+  script:
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets -- -D warnings
+    - cargo test
 
 # ---------------------------------------------------------------------------
 # Per-arch builds
