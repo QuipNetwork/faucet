@@ -1,0 +1,19 @@
+# Tooling config only. Runtime deps are pinned in requirements.txt (consumed by
+# the Docker build); dev/test deps in requirements-dev.txt. The faucet ships as a
+# single module (faucet_bot.py), so there is no [project] package section.
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ty.rules]
+# substrate-interface / dilithium-py ship without type stubs; don't fail on
+# untyped third-party imports.
+unresolved-import = "ignore"

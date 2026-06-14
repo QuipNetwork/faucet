@@ -1,0 +1,84 @@
+[package]
+name = "quip-faucet"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "Concurrent dev faucet for Quip substrate chains (tokio + jsonrpsee)"
+
+[[bin]]
+name = "quip-faucet"
+path = "src/main.rs"
+
+# --- Quip crates (pinned to the network-upgrade-cli branch that carries
+# crates/tools; re-pin to a stable tag/main once MR !32 merges). ---
+[dependencies.quip-protocol-runtime]
+git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
+rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+default-features = false
+features = ["std"]
+
+[dependencies.quip-transaction-crypto]
+git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
+rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+default-features = false
+features = ["std"]
+
+[dependencies.quip-tools]
+git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
+rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+default-features = false
+features = ["std"]
+
+[dependencies.pallet-faucet-ops]
+git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
+rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+default-features = false
+features = ["std"]
+
+# --- polkadot-sdk fork: declared with the SAME branch spec the quip crates use,
+# so cargo unifies every substrate crate to one commit (no duplicate-type hell). ---
+[dependencies.frame-system]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+branch = "v0.2"
+features = ["std"]
+
+[dependencies.pallet-balances]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+branch = "v0.2"
+features = ["std"]
+
+[dependencies.pallet-sudo]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+branch = "v0.2"
+features = ["std"]
+
+[dependencies.sp-core]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+branch = "v0.2"
+features = ["std", "serde"]
+
+[dependencies.sp-runtime]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+branch = "v0.2"
+features = ["std", "serde"]
+
+[dependencies]
+codec = { package = "parity-scale-codec", version = "3.7.5", features = ["derive"] }
+anyhow = "1.0.100"
+clap = { version = "4.5.13", features = ["derive", "env"] }
+jsonrpsee = { version = "0.24.3", features = ["client-core", "ws-client", "macros"] }
+tokio = { version = "1.51.1", features = ["macros", "rt-multi-thread", "time", "sync", "signal"] }
+axum = "0.7"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4.3"
+parking_lot = "0.12"
+
+# Pragmatic lint baseline for a standalone binary: hard-forbid unsafe; rely on
+# `cargo clippy -- -D warnings` (default lints) in CI. The stricter pedantic/
+# restriction set from the workspace can be layered on once it builds green.
+[lints.rust]
+unsafe_code = "forbid"
