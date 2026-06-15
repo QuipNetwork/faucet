@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Caddy front-door image for faucet.testnet.quip.network on Akash.
+# Builds the dnsimple-certifier client from source, copies it into
+# caddy:2-alpine alongside our entrypoint, and serves 443 by reverse-proxying
+# to the faucet service in the same Akash deployment.
+#
+# Build context: deploy/akash/ — Dockerfile expects ./dnsimple-certifier/
+# to exist here (vendored from ../dnsimple-certifier — Docker classic
+# builder ignores out-of-context symlinks, so we cp -r before building).
+# .gitignore excludes the vendored copy.
+#
+# Build (from deploy/akash/):
+#   cp -r ../../../dnsimple-certifier .
+#   docker build -f Dockerfile.caddy \
+#     -t registry.gitlab.com/quip.network/faucet:caddy-deploy-testnet-akash-3 .
+
+FROM golang:1.25-alpine AS certifier-builder
+COPY dnsimple-certifier /src
+WORKDIR /src
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /certifier ./cmd/certifier/
+
+# Tarsnap source-compile (mirrors pad.quip.network's pattern). Build in the
+# same alpine base as the runtime so the linker resolves cleanly against the
+# runtime's libssl/libcrypto/zlib.
+FROM caddy:2-alpine AS tarsnap-builder
+RUN apk add --no-cache gcc libc-dev make openssl-dev zlib-dev e2fsprogs-dev curl \
+ && curl -fsSL https://www.tarsnap.com/download/tarsnap-autoconf-1.0.41.tgz -o /tmp/tarsnap.tgz \
+ && cd /tmp && tar xzf tarsnap.tgz && cd tarsnap-autoconf-1.0.41 \
+ && ./configure && make all install
+
+FROM caddy:2-alpine
+
+LABEL org.opencontainers.image.title="quip-faucet-caddy"
+LABEL org.opencontainers.image.description="TLS reverse-proxy for faucet.testnet.quip.network (Akash, dnsimple-certifier, Tarsnap-backed cert persistence)"
+LABEL org.opencontainers.image.source="https://gitlab.com/quip.network/faucet"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
+
+# openssl: self-signed cert (MOCK_CERTIFIER) + boot-time cert validity check.
+# ca-certificates: outbound HTTPS to certifier.quip.network + Tarsnap server.
+# zlib: tarsnap runtime dep.
+RUN apk add --no-cache openssl ca-certificates zlib
+
+COPY --from=certifier-builder /certifier        /usr/local/bin/certifier
+COPY --from=tarsnap-builder   /usr/local/bin/tarsnap /usr/local/bin/tarsnap
+
+# Tarsnap config — keyfile is written at runtime by the entrypoint from the
+# base64-encoded TARSNAP_KEY env. Symlink /usr/local/etc/tarsnap.conf so
+# tarsnap finds the conf at its compile-time default path.
+RUN mkdir -p /etc/tarsnap /usr/local/tarsnap-cache /usr/local/etc \
+ && printf 'keyfile /etc/tarsnap/tarsnap.key\ncachedir /usr/local/tarsnap-cache\nnodump\nprint-stats\nhumanize-numbers\n' > /etc/tarsnap/tarsnap.conf \
+ && ln -s /etc/tarsnap/tarsnap.conf /usr/local/etc/tarsnap.conf
+
+COPY --chmod=755 caddy-entrypoint.sh /usr/local/bin/caddy-entrypoint.sh
+COPY            Caddyfile.template   /etc/caddy/Caddyfile
+
+EXPOSE 443
+
+ENTRYPOINT ["/usr/local/bin/caddy-entrypoint.sh"]
