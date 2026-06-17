@@ -19,6 +19,14 @@ as the `faucet` profile in its docker-compose stack.
 > bind unless the connected chain reports a known dev name. See the
 > `--allow-any-chain` flag below for the (deliberate) override.
 
+> **Funder must be the chain sudo key.** The faucet mints via
+> `Sudo.sudo(FaucetOps.mint)`, which the runtime authorizes only for
+> `Sudo::Key`. At startup it reads the chain's `Sudo.Key` and **exits with an
+> error if the funder doesn't match** — otherwise every mint would be accepted
+> into the tx pool and silently dropped, so `/request` would return `200` yet
+> never fund anything. `--pool-size 0` disables the `/sign` pool (it returns
+> `503`); `/request` is unaffected.
+
 ## API
 
 | Method & path | Body | Success |

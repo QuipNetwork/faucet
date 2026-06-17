@@ -16,7 +16,7 @@ mod signer;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use axum::{
     routing::{get, post},
     Router,
@@ -77,6 +77,9 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    // Verify the funder can actually mint before we touch anything on chain.
+    ensure_funder_is_sudo(&chain, &funder).await?;
+
     // Dedicated base wallet: sudo-topped-up, funds /request + pool via a nonce lane.
     let (base_pair, base_account) = funder.derive_base()?;
     info!("base wallet: {}", base_account.to_ss58check());
@@ -131,6 +134,13 @@ async fn main() -> Result<()> {
 /// Derive + fund the pool before binding, then adopt any contiguous funded prefix
 /// above the base size (a previously-grown pool).
 async fn init_pool(state: &Arc<AppState>) -> Result<()> {
+    if state.cfg.pool_size == 0 {
+        // Pool disabled: skip both creation and the grown-prefix adoption scan
+        // below (which starts at `pool_size` and would otherwise adopt any
+        // pre-funded pool accounts). `/sign` returns 503 with an empty pool.
+        info!("/sign pool disabled (--pool-size 0)");
+        return Ok(());
+    }
     for index in 0..state.cfg.pool_size {
         ensure_pool_account(state, index).await?;
     }
@@ -206,6 +216,32 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
         account.to_ss58check()
     );
     Ok(())
+}
+
+/// Fail fast if the funder is not the chain's sudo key. Every dispense flows
+/// through `Sudo::sudo(FaucetOps::mint)` (to top up the base wallet, which then
+/// transfers to users), and the runtime authorizes that only for `Sudo::Key`. A
+/// wrong key makes the node accept each extrinsic into its pool and then drop it,
+/// so `/request` returns `200` yet nothing ever lands — the silent failure this
+/// guards against. Crashing at startup makes the misconfiguration loud instead.
+async fn ensure_funder_is_sudo(chain: &ChainClient, funder: &Funder) -> Result<()> {
+    match chain.sudo_key().await.context("reading chain Sudo.Key")? {
+        Some(key) if key == funder.account => {
+            info!("funder confirmed as chain sudo key");
+            Ok(())
+        }
+        Some(key) => bail!(
+            "funder {} is NOT the chain sudo key (Sudo.Key = {}); every mint would be \
+             accepted into the tx pool then dropped. Set --faucet-key / \
+             QUIP_FAUCET_FAUCET_KEY to the sudo account.",
+            funder.account.to_ss58check(),
+            key.to_ss58check(),
+        ),
+        None => bail!(
+            "chain reports no Sudo.Key; this faucet mints via Sudo::sudo and cannot operate \
+             against it. Verify the --node-url target."
+        ),
+    }
 }
 
 /// Ensure the base wallet has runway: if its balance is below the top-up threshold
