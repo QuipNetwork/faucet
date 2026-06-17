@@ -223,6 +223,38 @@ impl ChainClient {
         bail!("free_balance retry exhausted")
     }
 
+    /// The chain's current `Sudo.Key` (the only origin allowed to dispatch the
+    /// root-only `FaucetOps.mint`), or `None` if sudo is unset. Idempotent →
+    /// fails over once on a transport error.
+    pub async fn sudo_key(&self) -> Result<Option<AccountId>> {
+        let mut storage_key = twox_128(b"Sudo").to_vec();
+        storage_key.extend(twox_128(b"Key")); // plain StorageValue: no key hashing
+        let storage_key = format!("0x{}", hex::encode(storage_key));
+        for attempt in 0..2 {
+            let client = self.client();
+            let raw: std::result::Result<Option<String>, _> = client
+                .request("state_getStorage", rpc_params![storage_key.clone()])
+                .await;
+            match raw {
+                Ok(None) => return Ok(None),
+                Ok(Some(encoded)) => {
+                    let stripped = encoded.strip_prefix("0x").unwrap_or(&encoded);
+                    let bytes = hex::decode(stripped).context("decoding Sudo.Key storage")?;
+                    let account = AccountId::decode(&mut bytes.as_slice())
+                        .context("decoding Sudo.Key AccountId")?;
+                    return Ok(Some(account));
+                }
+                Err(err) => {
+                    if attempt == 1 {
+                        return Err(err).context("querying Sudo.Key");
+                    }
+                    self.reconnect().await?;
+                }
+            }
+        }
+        bail!("sudo_key retry exhausted")
+    }
+
     /// The chain's next nonce for `account` (seeds nonce lanes / resync on drift).
     pub async fn next_index(&self, account: &AccountId) -> Result<u32> {
         let ss58 = account.to_ss58check();

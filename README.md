@@ -19,6 +19,14 @@ as the `faucet` profile in its docker-compose stack.
 > bind unless the connected chain reports a known dev name. See the
 > `--allow-any-chain` flag below for the (deliberate) override.
 
+> **Funder must be the chain sudo key.** The faucet mints via
+> `Sudo.sudo(FaucetOps.mint)`, which the runtime authorizes only for
+> `Sudo::Key`. At startup it reads the chain's `Sudo.Key` and **exits with an
+> error if the funder doesn't match** — otherwise every mint would be accepted
+> into the tx pool and silently dropped, so `/request` would return `200` yet
+> never fund anything. `--pool-size 0` disables the `/sign` pool (it returns
+> `503`); `/request` is unaffected.
+
 ## API
 
 | Method & path | Body | Success |
@@ -51,6 +59,35 @@ accounts are denied (`403`); empty accounts are only lightly throttled
 Set the lenient window `>=` chain block time. On a balance-query failure the
 faucet falls back to the strict window and proceeds (`--balance-query-fail-open`,
 the default) or denies (`--balance-query-fail-closed`).
+
+### Examples (curl)
+
+Fund an address. `amount` is in plancks and optional — omit it for the faucet
+default:
+
+```bash
+curl -X POST http://localhost:8087/request \
+    -H 'Content-Type: application/json' \
+    -d '{"dest":"<ss58 or 0x-hex>","amount":1000000000000}'
+# 200 {"extrinsic_hash":"0x…","amount":1000000000000,"dest":"…"}
+```
+
+Check whether an address is already funded. The balance gate runs before any
+dispense, so the same endpoint reports a funded account's balance and spends
+nothing — note it would *fund* an empty account, so this is a fund-or-report
+call, not a pure read-only probe:
+
+```bash
+curl -X POST http://localhost:8087/request \
+    -H 'Content-Type: application/json' \
+    -d '{"dest":"<ss58 or 0x-hex>"}'
+# 403 {"error":"destination already funded","free_balance_plancks":998996851040628}
+```
+
+For a read-only balance query independent of the faucet, the node also serves
+JSON-RPC over HTTP (`state_getStorage` on the `System.Account` key); that needs
+the storage key derived for the address, so reach for polkadot.js or a script
+rather than curl alone.
 
 ### Multiple nodes (failover)
 

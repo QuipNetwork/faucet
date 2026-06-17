@@ -45,6 +45,7 @@ pub struct Config {
     #[arg(long, default_value_t = false)]
     pub balance_query_fail_closed: bool,
 
+    /// Pre-funded `/sign` pool size. 0 disables the pool (`/sign` returns 503).
     #[arg(long, default_value_t = 8)]
     pub pool_size: u32,
     #[arg(long, default_value_t = 64)]
