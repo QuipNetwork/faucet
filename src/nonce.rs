@@ -25,6 +25,13 @@ impl NonceLane {
         self.next.fetch_add(1, Ordering::SeqCst) as u32
     }
 
+    /// The next nonce that *would* be allocated, without reserving it. Used by the
+    /// reconcile watchdog to compare the lane against the chain's `next_index` and
+    /// detect a stuck future-nonce gap.
+    pub fn current(&self) -> u32 {
+        self.next.load(Ordering::SeqCst) as u32
+    }
+
     /// Reset to the chain's reported next index (after a stale rejection / drift).
     pub fn resync(&self, chain_next: u32) {
         self.next.store(u64::from(chain_next), Ordering::SeqCst);

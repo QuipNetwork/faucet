@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
     spawn_refresh(Arc::clone(&state));
     spawn_replenish(Arc::clone(&state));
     spawn_base_monitor(Arc::clone(&state));
+    spawn_base_nonce_reconcile(Arc::clone(&state));
 
     let app = Router::new()
         .route("/health", get(handlers::health))
@@ -297,6 +298,66 @@ fn spawn_refresh(state: Arc<AppState>) {
             tokio::time::sleep(Duration::from_secs(2)).await;
             if let Err(err) = state.chain.refresh().await {
                 warn!("chain context refresh failed: {err:#}");
+            }
+        }
+    });
+}
+
+/// Self-heal the base-wallet nonce lane from a stuck future-nonce gap.
+///
+/// `ChainClient::submit_lane` is fire-and-forget (`author_submitExtrinsic`) and only
+/// resyncs the lane on a *stale* rejection (nonce too low). A *future*-nonce gap — the
+/// lane running ahead of the chain after a submitted tx was accepted into the pool then
+/// dropped (e.g. a node WS reconnect) — is never rejected: every later transfer is
+/// accepted into the pool's *future* queue (so `/request` returns 200 and logs `funded`)
+/// but is never included, and the lane never recovers. The faucet then 200s indefinitely
+/// while delivering nothing. This watchdog detects that and resyncs the lane to chain.
+///
+/// It acts only on a *sustained* stall: the chain's base `next_index` shows no progress
+/// for `base_nonce_stall_checks` consecutive intervals while the lane sits ahead of it.
+/// Normal pipelining (the lane briefly ahead of in-flight, soon-included txs) advances
+/// the chain nonce within a block or two and resets the counter, so steady load never
+/// trips it. (A more thorough alternative is to confirm inclusion via
+/// `author_submitAndWatchExtrinsic` in `submit_lane`; this watchdog is the minimal,
+/// off-the-hot-path fix.)
+fn spawn_base_nonce_reconcile(state: Arc<AppState>) {
+    let interval = state.cfg.base_nonce_reconcile_interval();
+    let stall_limit = state.cfg.base_nonce_stall_checks;
+    tokio::spawn(async move {
+        let mut last_chain_next: Option<u32> = None;
+        let mut stalled: u32 = 0;
+        loop {
+            tokio::time::sleep(interval).await;
+            let chain_next = match state.chain.next_index(&state.base.account).await {
+                Ok(n) => n,
+                Err(err) => {
+                    warn!("base nonce reconcile: next_index failed: {err:#}");
+                    continue;
+                }
+            };
+            let lane = state.base.nonce.current();
+            let Some(prev) = last_chain_next.replace(chain_next) else {
+                continue; // first tick only establishes a baseline
+            };
+            if chain_next > prev || lane <= chain_next {
+                // Inclusions are advancing the on-chain nonce (healthy), or the lane
+                // isn't ahead (nothing pending). Not a stall.
+                stalled = 0;
+                continue;
+            }
+            // No on-chain progress this interval while the lane is ahead → submitted
+            // transfers aren't landing.
+            stalled += 1;
+            warn!(
+                "base nonce stalled {stalled}/{stall_limit}: chain_next={chain_next} \
+                 lane={lane} (transfers submitted but not included)"
+            );
+            if stalled >= stall_limit {
+                warn!(
+                    "base nonce lane stuck; resyncing lane {lane} -> chain next_index {chain_next}"
+                );
+                state.base.nonce.resync(chain_next);
+                stalled = 0;
             }
         }
     });

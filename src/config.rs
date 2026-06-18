@@ -72,6 +72,16 @@ pub struct Config {
     #[arg(long, default_value_t = 60.0)]
     pub base_monitor_interval_seconds: f64,
 
+    /// Seconds between base-wallet nonce-lane reconcile checks (self-heal a stuck
+    /// future-nonce gap; see `spawn_base_nonce_reconcile`).
+    #[arg(long, default_value_t = 20.0)]
+    pub base_nonce_reconcile_interval_seconds: f64,
+    /// Consecutive reconcile checks showing no on-chain nonce progress while the lane
+    /// sits ahead, before the lane is resynced. `checks * interval` must exceed
+    /// inclusion latency so normal pipelining never trips it (default 3 * 20s = 60s).
+    #[arg(long, default_value_t = 3)]
+    pub base_nonce_stall_checks: u32,
+
     /// Allow running against non-dev chains (skips the startup name guard). UNSAFE.
     #[arg(long, default_value_t = false)]
     pub allow_any_chain: bool,
@@ -104,5 +114,8 @@ impl Config {
     }
     pub fn base_monitor_interval(&self) -> Duration {
         Duration::from_secs_f64(self.base_monitor_interval_seconds)
+    }
+    pub fn base_nonce_reconcile_interval(&self) -> Duration {
+        Duration::from_secs_f64(self.base_nonce_reconcile_interval_seconds)
     }
 }
