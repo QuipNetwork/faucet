@@ -3130,7 +3130,7 @@ dependencies = [
 [[package]]
 name = "pallet-faucet-ops"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -3165,7 +3165,7 @@ dependencies = [
 [[package]]
 name = "pallet-quantum-compute-mempool"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -3180,7 +3180,7 @@ dependencies = [
 [[package]]
 name = "pallet-quantum-pow"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "blake3",
  "frame-benchmarking",
@@ -3237,7 +3237,7 @@ dependencies = [
 [[package]]
 name = "pallet-template"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -3295,7 +3295,7 @@ dependencies = [
 [[package]]
 name = "pallet-xqvm"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "aglais-xqvm-bytecode",
  "aglais-xqvm-vm",
@@ -3693,7 +3693,7 @@ dependencies = [
 [[package]]
 name = "quantum-validation"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "blake3",
  "libm",
@@ -3757,7 +3757,7 @@ dependencies = [
 [[package]]
 name = "quip-protocol-runtime"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "frame-benchmarking",
  "frame-executive",
@@ -3806,7 +3806,7 @@ dependencies = [
 [[package]]
 name = "quip-tools"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "anyhow",
  "clap",
@@ -3828,7 +3828,7 @@ dependencies = [
 [[package]]
 name = "quip-transaction-crypto"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=574fa676ddddd71170e26d67d17e394bf3f2f310#574fa676ddddd71170e26d67d17e394bf3f2f310"
+source = "git+ssh://git@gitlab.com/quip.network/quip-protocol-rs.git?rev=edc936994104dbfaf3d6d23bb5dfd4d285cca33d#edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 dependencies = [
  "log",
  "parity-scale-codec",
