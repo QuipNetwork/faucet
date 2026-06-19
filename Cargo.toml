@@ -14,25 +14,25 @@ path = "src/main.rs"
 # crates/tools; re-pin to a stable tag/main once MR !32 merges). ---
 [dependencies.quip-protocol-runtime]
 git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
 git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-tools]
 git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
 git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "574fa676ddddd71170e26d67d17e394bf3f2f310"
+rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
 default-features = false
 features = ["std"]
 
