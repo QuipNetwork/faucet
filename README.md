@@ -6,11 +6,14 @@ substrate chains. Listens on HTTP and submits
 (typically `//Alice` on a dev chain) to whichever destination is
 requested. Per-destination rate-limited.
 
-The bot is a deployable copy of `faucet_bot.py` from the
-[`quip-protocol`](https://gitlab.com/quip.network/quip-protocol) project,
-adapted to mint through the root-only `FaucetOps` pallet by wrapping each
-request in `Sudo.sudo(...)`. The configured faucet key therefore needs to be
-the chain's sudo/dev key.
+A concurrent Rust binary (`src/`, `quip-faucet`) built on tokio + jsonrpsee
+(multiplexed RPC, no global lock) with **per-account nonce lanes**, so `/request`
+mints pipeline concurrently instead of serializing one transaction per block. It
+reuses the Quip runtime, crypto, and client crates (`quip-protocol-runtime`,
+`quip-transaction-crypto`, `quip-tools`) so the extrinsic wire format can never
+drift from the chain. Each request mints through the root-only `FaucetOps` pallet
+wrapped in `Sudo.sudo(...)`, so the configured faucet key must be the chain's
+sudo/dev key.
 
 Used by [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 as the `faucet` profile in its docker-compose stack.
@@ -46,15 +49,16 @@ again for a fresh one. Hybrid-chain responses are ~8 KB (ML-DSA-44 signature).
 | Code | Meaning |
 |---|---|
 | `400` | Invalid JSON / `dest` / `amount`. |
-| `403` | Destination already funded — free balance exceeds `--max-funded-balance-plancks` (default 0, i.e. any funds). Body includes `free_balance_plancks`. |
+| `403` | Destination already funded — free balance exceeds `--max-funded-balance-plancks` (default: one dispense; set 0 to deny any funds). Body includes `free_balance_plancks`. |
 | `429` | Rate limited (`retry_after_seconds`). Confirmed-empty accounts use the short `--lenient-rate-limit-seconds`; if the balance query can't run, the strict `--rate-limit-seconds` applies. |
 | `503` | `/sign` pool temporarily exhausted (`retry_after_seconds`), or balance check unavailable when `--balance-query-fail-closed`. |
 | `502` | Transfer/sign failed; see logs. |
 
 ### Balance gate & rate limiting
 
-Every request first checks the destination's on-chain free balance. Funded
-accounts are denied (`403`); empty accounts are only lightly throttled
+Every request first checks the destination's on-chain free balance. Accounts
+already holding more than `--max-funded-balance-plancks` (default: one dispense)
+are denied (`403`); low or empty accounts are only lightly throttled
 (`--lenient-rate-limit-seconds`, just long enough to bridge inclusion latency).
 Set the lenient window `>=` chain block time. On a balance-query failure the
 faucet falls back to the strict window and proceeds (`--balance-query-fail-open`,
@@ -99,20 +103,19 @@ nodes are assumed to be replicas of the same chain.
 
 ## Run locally
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+Needs SSH access to the private `quip-protocol-rs` repo (`.cargo/config.toml`
+uses the git CLI for auth).
 
-python faucet_bot.py \
+```bash
+cargo run --release -- \
     --node-url ws://localhost:9944 \
     --faucet-key //Alice \
-    --listen 127.0.0.1 \
+    --listen-host 127.0.0.1 \
     --port 8087
 ```
 
-`python faucet_bot.py --help` lists every flag (rate limit, log level,
-allow-any-chain override).
+`quip-faucet --help` lists every flag (rate limit, log level, allow-any-chain
+override).
 
 ## Run in Docker
 
@@ -152,49 +155,29 @@ window, up to `--pool-max-size`. Tune the pool with `--pool-size`,
 
 Auto-detected from chain metadata at startup:
 
-- **sr25519** — vanilla `MultiSignature` chains. URI → keypair via
-  substrate-interface.
+- **sr25519** — vanilla `MultiSignature` chains.
 - **hybrid** — `HybridTxSignature` chains (sr25519 + ML-DSA-44, FIPS 204).
-  Funder URI must be one of the precomputed dev seeds (`//Alice`, `//Bob`,
-  `//Alice//stash`); extrinsic is built byte-by-byte because
-  substrate-interface doesn't know the hybrid envelope.
 
-## Tests
+Either way the funder key is derived from its SURI (`//Alice`, a raw seed, or a
+mnemonic) via the shared `quip-transaction-crypto`/`quip-tools` crates, and the
+pool and base accounts are hard-derived from it — so the signed extrinsic
+envelope always matches the chain, with no hardcoded dev-seed table.
 
-```bash
-uv venv && source .venv/bin/activate
-uv pip install -r requirements-dev.txt
-pytest          # unit tests (mock the chain; no node required)
-ruff check . && ty check faucet_bot.py
-```
+## Build, test & CI
 
-## Rust rewrite (in progress)
-
-A concurrent Rust faucet (`src/`, binary `quip-faucet`) is being stacked on top of
-the Python one. It exists to fix throughput under concurrent load: the Python
-faucet serializes every chain call behind one lock held across the inclusion wait,
-so it funds ~once per block. The Rust version uses tokio + jsonrpsee (multiplexed
-RPC, no global lock) and **per-account nonce lanes** so `/request` mints pipeline
-concurrently, and reuses the Quip runtime/crypto/client crates
-(`quip-protocol-runtime`, `quip-transaction-crypto`, `quip-tools`) so the extrinsic
-wire format can never drift from the chain. `/sign` is backed by the same
-deterministic, adaptive pool as the Python version.
+Needs SSH access (local) or a CI job token to fetch the private
+`quip-protocol-rs` dependency. Unit tests mock the chain, so no node is required.
 
 ```bash
-# Needs SSH access to the private quip-protocol-rs repo (.cargo/config uses git-cli).
-cargo run --release -- --node-url ws://localhost:9944 --faucet-key //Alice
-cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build --release --locked
 ```
 
-The HTTP API (`/request`, `/sign`, `/health`) and behavior (balance gate, two-tier
-rate limiting, multi-node failover, pool growth) match the Python faucet documented
-above.
-
-The published image now runs this Rust binary. CI compiles it in the substrate
-toolchain image (`build-binary`) and kaniko packages the prebuilt binary into a
-slim Debian image (`publish-image`), linux/amd64 only — matching the
-quip-network-node image. `faucet_bot.py` and its Python tooling remain in the
-repo until the Rust faucet reaches parity against a node, then are removed.
+CI compiles the binary in the substrate toolchain image (`build-binary`); kaniko
+then packages the prebuilt binary into a slim Debian image (`publish-image`),
+linux/amd64 only — matching the quip-network-node image.
 
 ## License
 

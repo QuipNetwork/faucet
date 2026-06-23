@@ -1,5 +1,0 @@
-aiohttp>=3.9.0
-substrate-interface>=1.7.4
-scalecodec>=1.2
-dilithium-py>=1.0
-blake3>=1.0.5

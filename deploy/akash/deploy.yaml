@@ -49,11 +49,9 @@ endpoints:
 
 services:
   faucet:
-    # Upstream Rust faucet — :latest is the Rust binary as of the image
-    # cutover. It derives op-1's real hybrid account natively from the
-    # mnemonic (HybridPair::from_string), so there is no patched image and no
-    # master-seed derivation step (the Python faucet needed both because
-    # substrate-interface could not ML-DSA-keygen an arbitrary mnemonic).
+    # :latest is the Rust faucet binary published by CI. It derives op-1's real
+    # hybrid account natively from the mnemonic (HybridPair::from_string), so
+    # there is no patched image and no master-seed derivation step.
     # Pin :sha-<short> instead of :latest for a reproducible deploy.
     image: registry.gitlab.com/quip.network/faucet:latest
     args:

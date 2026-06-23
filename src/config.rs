@@ -31,8 +31,11 @@ pub struct Config {
     #[arg(long, default_value_t = DEFAULT_AMOUNT_PLANCKS)]
     pub amount: u128,
 
-    /// Deny when the destination's free balance exceeds this (0 => any funds).
-    #[arg(long, default_value_t = 0)]
+    /// Deny when the destination's free balance exceeds this. Defaults to one
+    /// dispense: an account already holding a full hand-out doesn't need more,
+    /// while dust (e.g. the existential deposit) stays eligible. Set 0 to deny
+    /// any account holding funds.
+    #[arg(long = "max-funded-balance-plancks", default_value_t = DEFAULT_AMOUNT_PLANCKS)]
     pub max_funded_balance: u128,
 
     /// Strict fallback window per destination (used when the balance query fails).
