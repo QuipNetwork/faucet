@@ -1,6 +1,7 @@
-# The image is COPY-only: the build context needs nothing but the prebuilt
-# `quip-faucet` binary (staged at the repo root by CI / a local cargo build).
-# Ignore everything, then re-include just the binary. A top-level negation like
-# this is reliable; negating a path inside an excluded dir (e.g. target/) is not.
+# The image needs only the prebuilt `quip-faucet` binary (staged at the repo
+# root by CI / a local cargo build) and the entrypoint script. Ignore
+# everything, then re-include just those. Top-level negations are reliable;
+# negating a path inside an excluded dir (e.g. target/) is not.
 *
 !quip-faucet
+!entrypoint.sh
