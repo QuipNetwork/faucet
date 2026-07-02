@@ -1,23 +1,41 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # GitLab CI/CD for the Quip faucet.
-# Publishes a linux/amd64 image to ${CI_REGISTRY_IMAGE} on main and on tags,
-# matching the quip-network-node image (also amd64-only).
+# Publishes a multi-arch (linux/amd64 + linux/arm64) image to
+# ${CI_REGISTRY_IMAGE} on main and on tags, the same way quip-protocol-rs
+# publishes quip-network-node: one image per architecture built on a native
+# runner, stitched into a manifest list so a single tag serves both.
 #
 # The faucet pulls the *private* quip-protocol-rs over git and compiles the
-# substrate runtime, so the image is built in two steps instead of from source
-# inside the Dockerfile:
-#   build-binary   compiles target/release/quip-faucet in the substrate
-#                  toolchain image, authenticating to the private dep with the
-#                  job token (the same path cargo-test uses), and exports the
-#                  binary as an artifact.
-#   publish-image  kaniko packages that prebuilt binary into a slim Debian
-#                  image (COPY only). The job token never enters the Docker
-#                  build, so it can never leak into an image or cache layer.
+# substrate runtime, so each architecture is built in two steps instead of
+# from source inside the Dockerfile:
+#   build-binary-<arch>   compiles target/release/quip-faucet in the substrate
+#                         toolchain image on a native runner, authenticating to
+#                         the private dep with the job token (the same path
+#                         cargo-test uses), and exports the binary as an
+#                         artifact.
+#   publish-image-<arch>  kaniko packages that prebuilt binary into a slim
+#                         Debian image (COPY only), pushed as an arch-suffixed
+#                         tag (:<tag>-amd64 / :<tag>-arm64). The job token
+#                         never enters the Docker build, so it can never leak
+#                         into an image or cache layer.
+#   manifest              manifest-tool combines the per-arch images into the
+#                         consumer-facing tags as a multi-arch manifest list.
+#
+# Runner fleet: the `docker` tag is load-bearing — it pins jobs to *container*
+# (Docker) executors that honour `image:`. The fleet also has macOS shell
+# runners carrying the bare arch tags (amd64/arm64) that ignore `image:` and
+# run on the SIP-protected host. See quip-protocol-rs's .gitlab-ci.yml for the
+# full fleet topology notes.
+#
+# arm64 prerequisite: build-binary-arm64 pulls $TOOLCHAIN_IMAGE on the arm64
+# runner, so the toolchain image must be published for linux/arm64 as well —
+# see the buildx command in quip-protocol-rs/.gitlab/ci-toolchain.Dockerfile.
 
 stages:
   - test
   - build
   - publish
+  - manifest
 
 variables:
   # → registry.gitlab.com/quip.network/faucet
@@ -37,6 +55,20 @@ workflow:
     - if: $CI_COMMIT_BRANCH == "main"
     - if: $CI_COMMIT_TAG
 
+# Shared publish rules: which refs publish, and the PRIMARY_TAG each maps to.
+# Referenced (not inherited) by the build/publish/manifest jobs so all of them
+# resolve the same PRIMARY_TAG for a given pipeline. Only main moves :latest;
+# a tag (stable or -rcN pre-release) publishes :<tag> plus the floating
+# minor-series tag assembled in `manifest`, and never moves :latest.
+.publish-rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      variables:
+        PRIMARY_TAG: latest
+    - if: $CI_COMMIT_TAG
+      variables:
+        PRIMARY_TAG: $CI_COMMIT_TAG
+
 # ---------------------------------------------------------------------------
 # Rust faucet: fmt / clippy / test. Runs on every MR so a build break is caught
 # before merge. Uses the shared substrate toolchain image because building
@@ -45,13 +77,16 @@ workflow:
 cargo-test:
   stage: test
   image: $TOOLCHAIN_IMAGE
-  tags: [linux, amd64]
+  tags: [docker, amd64]
   interruptible: true
   timeout: 60m
   cache:
+    # amd64 prefix keeps this cache shared with build-binary-amd64 but
+    # disjoint from the arm64 build cache (target/ is arch-specific).
     key:
       files:
         - Cargo.lock
+      prefix: amd64
     paths:
       - .cargo/registry/cache
       - .cargo/registry/index
@@ -71,29 +106,19 @@ cargo-test:
     - cargo test
 
 # ---------------------------------------------------------------------------
-# Compile the release binary the image ships. Gated on main/tags (a release
-# build is expensive and pointless on MRs). No explicit `needs`, so it runs
-# after the `test` stage — the image is only ever built from green code. The
-# binary is staged at the repo root so .dockerignore can ship just it (avoids
-# the negation-into-excluded-dir footgun of a target/ path).
+# Compile the release binary each image ships, once per architecture on a
+# native runner (no cross-compiling: substrate-wasm-builder and ring make
+# cross setups brittle). Gated on main/tags (a release build is expensive and
+# pointless on MRs). No explicit `needs`, so these run after the `test`
+# stage — the image is only ever built from green code. The binary is staged
+# at the repo root so .dockerignore can ship just it (avoids the
+# negation-into-excluded-dir footgun of a target/ path).
 # ---------------------------------------------------------------------------
-build-binary:
+.build-binary:
   stage: build
   image: $TOOLCHAIN_IMAGE
-  tags: [linux, amd64]
   interruptible: true
-  timeout: 60m
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_COMMIT_TAG
-  cache:
-    key:
-      files:
-        - Cargo.lock
-    paths:
-      - .cargo/registry/cache
-      - .cargo/registry/index
-      - target/
+  rules: !reference [.publish-rules, rules]
   before_script:
     - rustup target add wasm32v1-none
     - rustup component add rust-src
@@ -108,53 +133,126 @@ build-binary:
       - quip-faucet
     expire_in: 1 day
 
+build-binary-amd64:
+  extends: .build-binary
+  tags: [docker, amd64]
+  timeout: 60m
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: amd64
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - target/
+
+build-binary-arm64:
+  extends: .build-binary
+  tags: [docker, arm64]
+  # The arm64 runner is a docker-executor on an Apple-Silicon Mac (OrbStack),
+  # slower than the amd64 Linux boxes; a cold release build of the faucet plus
+  # the substrate runtime can run long there.
+  timeout: 180m
+  cache:
+    key:
+      files:
+        - Cargo.lock
+      prefix: arm64
+    paths:
+      - .cargo/registry/cache
+      - .cargo/registry/index
+      - target/
+
 # ---------------------------------------------------------------------------
-# Package the prebuilt binary into the published image. `needs: build-binary`
-# pulls the `quip-faucet` artifact into the kaniko context; the Dockerfile is
-# COPY-only (no toolchain, no git, no token).
+# Package each prebuilt binary into an arch-suffixed image. `needs` pulls the
+# matching arch's `quip-faucet` artifact into the kaniko context; the
+# Dockerfile is COPY-only (no toolchain, no git, no token), so packaging is
+# cheap and needs no kaniko layer cache. Only the arch-suffixed tag is pushed
+# here — the consumer-facing tags are assembled by `manifest`.
 # ---------------------------------------------------------------------------
-publish-image:
+.publish-image:
   stage: publish
   image:
     name: gcr.io/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
-  tags: [linux, amd64]
-  needs:
-    - build-binary
-  rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-      variables:
-        PRIMARY_TAG: latest
-    - if: $CI_COMMIT_TAG
-      variables:
-        PRIMARY_TAG: $CI_COMMIT_TAG
+  timeout: 30m
+  interruptible: true
+  rules: !reference [.publish-rules, rules]
   before_script:
-    # The cuda runners' NVIDIA container runtime bind-mounts host GPU driver
-    # firmware into every job container at /lib/firmware/nvidia/. kaniko's
-    # rootfs extraction cannot replace /lib with the usr-merge symlink while
-    # those mounts are busy, so the executor runs with --ignore-path=/lib,
-    # which skips that replacement and preserves /lib as a plain directory.
-    # The ELF interpreter resolves through /lib/x86_64-linux-gnu, so the RUN
-    # (apt-get) in the Dockerfile needs this shim. It dangles until kaniko
-    # unpacks the rootfs and never reaches the image: /lib is excluded from
-    # snapshots and the final image's /lib symlink comes from the base layers.
-    - mkdir -p /lib && ln -sfn /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu
+    # GPU-runner firmware workaround — amd64 only (see KANIKO_LIB_IGNORE).
+    # The amd64 builders are NVIDIA GPU hosts whose container runtime
+    # bind-mounts host firmware into /lib, so kaniko must --ignore-path=/lib;
+    # that drops the multilib dir, so recreate it for this arch's triplet (the
+    # Dockerfile's RUN/apt-get resolves its ELF interpreter through it). The
+    # shim dangles until kaniko unpacks the rootfs and never reaches the
+    # image. Deliberately NOT applied on arm64: no firmware mount there, and
+    # on aarch64 the ELF interpreter lives directly in /lib, so ignoring /lib
+    # would make every RUN fail.
+    - if [ -n "$KANIKO_LIB_IGNORE" ]; then mkdir -p /lib && ln -sfn /usr/lib/$TRIPLET /lib/$TRIPLET; fi
     - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n ${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD} | base64)\"}}}" > /kaniko/.docker/config.json
-  script:
-    # On tag pipelines, also publish a floating minor-series tag derived from the
-    # release tag (e.g. v0.2.0 → :v0.2) so deployments can pin a series. Branch
-    # pipelines get PRIMARY_TAG + sha only. The debug image ships busybox grep -oE.
     - |
-      SERIES_DEST=""
-      if [ -n "$CI_COMMIT_TAG" ]; then
-        SERIES_TAG=$(printf '%s' "$CI_COMMIT_TAG" | grep -oE '^v[0-9]+\.[0-9]+' || true)
-        [ -n "$SERIES_TAG" ] && SERIES_DEST="--destination=$IMAGE:$SERIES_TAG"
-      fi
+      printf '{"auths":{"%s":{"auth":"%s"}}}\n' \
+        "$CI_REGISTRY" \
+        "$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+  script:
+    - |
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile" \
-        --destination "$IMAGE:$PRIMARY_TAG" \
-        --destination "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" \
-        $SERIES_DEST \
-        --ignore-path=/lib
+        --destination "$IMAGE:$PRIMARY_TAG-$ARCH" \
+        $KANIKO_LIB_IGNORE
+
+publish-image-amd64:
+  extends: .publish-image
+  tags: [docker, amd64]
+  needs:
+    - build-binary-amd64
+  variables:
+    ARCH: amd64
+    TRIPLET: x86_64-linux-gnu
+    KANIKO_LIB_IGNORE: "--ignore-path=/lib"
+
+publish-image-arm64:
+  extends: .publish-image
+  tags: [docker, arm64]
+  needs:
+    - build-binary-arm64
+  variables:
+    ARCH: arm64
+
+# ---------------------------------------------------------------------------
+# Combine the per-arch images into a multi-arch manifest list. manifest-tool
+# replaces the literal `ARCH` token in --template with each platform's arch
+# (amd64 / arm64), matching the arch-suffixed tags the publish jobs pushed,
+# and stamps the assembled index with the consumer-facing tags: PRIMARY_TAG,
+# the commit-sha tag, and (on release tags) the floating minor-series tag
+# (e.g. v0.2.0 → :v0.2). Alpine busybox grep supports -oE.
+# ---------------------------------------------------------------------------
+manifest:
+  stage: manifest
+  needs:
+    - publish-image-amd64
+    - publish-image-arm64
+  image:
+    name: mplatform/manifest-tool:alpine
+    entrypoint: [""]
+  tags: [docker, amd64]
+  interruptible: true
+  rules: !reference [.publish-rules, rules]
+  script:
+    - |
+      ADDL_TAGS="sha-$CI_COMMIT_SHORT_SHA"
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        SERIES_TAG=$(printf '%s' "$CI_COMMIT_TAG" | grep -oE '^v[0-9]+\.[0-9]+' || true)
+        [ -n "$SERIES_TAG" ] && ADDL_TAGS="$ADDL_TAGS,$SERIES_TAG"
+      fi
+      manifest-tool \
+        --username "$CI_REGISTRY_USER" \
+        --password "$CI_REGISTRY_PASSWORD" \
+        push from-args \
+        --platforms linux/amd64,linux/arm64 \
+        --template "$IMAGE:$PRIMARY_TAG-ARCH" \
+        --target "$IMAGE:$PRIMARY_TAG" \
+        --tags "$ADDL_TAGS"
