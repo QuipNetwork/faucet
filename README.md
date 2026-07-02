@@ -119,8 +119,9 @@ override).
 
 ## Run in Docker
 
-The published image (`registry.gitlab.com/quip.network/faucet`, linux/amd64)
-runs the Rust faucet binary. Flags map directly to its CLI (`--help`):
+The published image (`registry.gitlab.com/quip.network/faucet`, multi-arch
+linux/amd64 + linux/arm64) runs the Rust faucet binary. Flags map directly to
+its CLI (`--help`):
 
 ```bash
 docker run --rm -p 8087:8087 \
@@ -175,9 +176,11 @@ cargo test
 cargo build --release --locked
 ```
 
-CI compiles the binary in the substrate toolchain image (`build-binary`); kaniko
-then packages the prebuilt binary into a slim Debian image (`publish-image`),
-linux/amd64 only — matching the quip-network-node image.
+CI compiles the binary in the substrate toolchain image once per architecture
+(`build-binary-amd64`/`-arm64`, each on a native runner); kaniko packages each
+prebuilt binary into a slim Debian image (`publish-image-<arch>`), and
+`manifest` stitches them into a multi-arch (linux/amd64 + linux/arm64)
+manifest list — matching the quip-network-node image.
 
 ## License
 
