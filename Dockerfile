@@ -20,19 +20,27 @@ LABEL org.opencontainers.image.description="Concurrent dev faucet for Quip subst
 LABEL org.opencontainers.image.source="https://gitlab.com/quip.network/faucet"
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 
+# Runtime deps track the Debian base; pinning point versions adds churn
+# without a security benefit (same policy as the quip-network-node image).
+# hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tini ca-certificates \
+    tini ca-certificates gosu \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root runtime user matching the PUID/PGID 1000 convention used by
-# nodes.quip.network's docker-compose stack.
+# Non-root runtime user. The entrypoint remaps it to PUID/PGID (default 1000)
+# at start — the runtime convention used by nodes.quip.network's compose
+# stack — then drops privileges via gosu.
 RUN groupadd --system --gid 1000 quip \
     && useradd --system --uid 1000 --gid 1000 --home /home/quip \
        --create-home --shell /usr/sbin/nologin quip
 
 COPY quip-faucet /usr/local/bin/quip-faucet
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-USER quip
+# No USER: the container starts as root only so the entrypoint can remap
+# quip to PUID/PGID; it execs the faucet as quip immediately. Starting with
+# --user still works — the entrypoint then execs directly, skipping the remap.
 EXPOSE 8087
 
-ENTRYPOINT ["tini", "--", "/usr/local/bin/quip-faucet"]
+ENTRYPOINT ["tini", "--", "/usr/local/bin/entrypoint.sh"]

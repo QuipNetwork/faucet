@@ -86,7 +86,15 @@ pub struct Config {
     pub base_nonce_stall_checks: u32,
 
     /// Allow running against non-dev chains (skips the startup name guard). UNSAFE.
-    #[arg(long, default_value_t = false)]
+    /// The env var takes truthy values (`1`/`true`); `0`, `false`, or empty keep the
+    /// guard on — nodes.quip.network's compose stack always sets it (default `0`),
+    /// so the parser must accept falsey values rather than only flag presence.
+    #[arg(
+        long,
+        default_value_t = false,
+        env = "QUIP_FAUCET_ALLOW_ANY_CHAIN",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
     pub allow_any_chain: bool,
 }
 
@@ -120,5 +128,41 @@ impl Config {
     }
     pub fn base_nonce_reconcile_interval(&self) -> Duration {
         Duration::from_secs_f64(self.base_nonce_reconcile_interval_seconds)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Config;
+
+    fn parse(extra: &[&str]) -> Config {
+        let mut argv = vec!["quip-faucet", "--node-url", "ws://localhost:9944"];
+        argv.extend(extra);
+        Config::try_parse_from(argv).expect("config parses")
+    }
+
+    /// Env mutation is process-global, so every QUIP_FAUCET_ALLOW_ANY_CHAIN
+    /// scenario lives in one sequential test body (no parallel-test races).
+    #[test]
+    fn allow_any_chain_flag_and_env() {
+        assert!(!parse(&[]).allow_any_chain);
+        assert!(parse(&["--allow-any-chain"]).allow_any_chain);
+
+        for truthy in ["1", "true", "yes"] {
+            std::env::set_var("QUIP_FAUCET_ALLOW_ANY_CHAIN", truthy);
+            assert!(parse(&[]).allow_any_chain, "env {truthy:?} should enable");
+        }
+        // The compose stack defaults the var to "0": it must parse as
+        // guard-on — not error out, as clap's default bool parser would.
+        for falsey in ["0", "false", ""] {
+            std::env::set_var("QUIP_FAUCET_ALLOW_ANY_CHAIN", falsey);
+            assert!(
+                !parse(&[]).allow_any_chain,
+                "env {falsey:?} should stay off"
+            );
+        }
+        std::env::remove_var("QUIP_FAUCET_ALLOW_ANY_CHAIN");
     }
 }
