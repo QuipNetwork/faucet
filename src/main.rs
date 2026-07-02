@@ -67,6 +67,11 @@ async fn main() -> Result<()> {
         .init();
 
     let cfg = Config::parse();
+    if cfg.allow_any_chain {
+        warn!(
+            "allow-any-chain set: dev-chain guard disabled; unsafe outside controlled environments"
+        );
+    }
     let funder = Funder::from_suri(&cfg.faucet_key).context("loading funder key")?;
     info!("funder: {}", funder.account.to_ss58check());
 

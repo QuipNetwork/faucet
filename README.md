@@ -132,6 +132,16 @@ docker run --rm -p 8087:8087 \
     --port=8087
 ```
 
+Runtime environment variables (all optional):
+
+- `PUID` / `PGID` — uid/gid the faucet runs as (default `1000`). The
+  entrypoint remaps the internal `quip` user at start and drops privileges
+  via gosu, matching the quip-network-node image's convention.
+- `QUIP_FAUCET_ALLOW_ANY_CHAIN=1` — same as `--allow-any-chain`; `0`,
+  `false`, or empty keep the dev-chain guard on. UNSAFE outside controlled
+  environments.
+- `QUIP_FAUCET_FAUCET_KEY` — same as `--faucet-key`.
+
 For the full stack (validator + faucet behind Caddy), see
 [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 and run `docker compose --profile validator-cpu --profile faucet up -d`.
