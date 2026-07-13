@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -83,6 +83,17 @@ impl ChainClient {
                     *self.client.write() = Arc::new(client);
                     self.idx.store(i, Ordering::SeqCst);
                     warn!("faucet failed over to node[{i}]: {}", self.urls[i]);
+                    // Re-derive the cached context against the NEW node before any
+                    // submission builds an extrinsic from it: the mortal era is
+                    // anchored to `best_hash`/`best_number`, so reusing node[0]'s tip
+                    // against node[1] can leave the tx unimportable (silently never
+                    // lands). Best-effort — the 2s refresh task is the backstop.
+                    match fetch_chain_context(&self.client(), &self.funder).await {
+                        Ok(ctx) => *self.base_ctx.write() = ctx,
+                        Err(err) => {
+                            warn!("post-failover context refresh failed: {err:#}")
+                        }
+                    }
                     return Ok(());
                 }
                 Err(err) => warn!("node[{i}] reconnect failed: {err:#}"),
@@ -140,14 +151,26 @@ impl ChainClient {
     }
 
     /// Submit a transfer from the dedicated base wallet, drawing the nonce from its
-    /// lane (concurrent — the base wallet is faucet-only). On a stale rejection,
-    /// resync the lane from chain and retry. Fire-and-forget.
+    /// lane (concurrent — the base wallet is faucet-only), then **confirm the drip
+    /// actually landed on-chain** before reporting success. On a stale rejection,
+    /// resync the lane from chain and retry.
+    ///
+    /// `author_submitExtrinsic` returning `Ok` only proves pool-acceptance, not
+    /// inclusion: a tx accepted-then-dropped (mortal-era expiry, WS reconnect,
+    /// failover) advances the lane while the chain never consumes the nonce,
+    /// stranding every later drip in the pool's future queue (accepted, so the
+    /// caller sees 200/`funded`, but never included). To prevent that silent
+    /// failure we wait until the chain consumes the nonce; on a confirmed miss we
+    /// heal the lane inline (so the next drip lands immediately, without waiting for
+    /// the ~60s reconcile watchdog) and return an honest error.
     pub async fn submit_lane(
         &self,
         signer: &HybridPair,
         account: &AccountId,
         lane: &NonceLane,
         call: RuntimeCall,
+        confirm_timeout: Duration,
+        confirm_poll: Duration,
     ) -> Result<Hash> {
         let mut last_err = String::new();
         for attempt in 0..5 {
@@ -158,7 +181,37 @@ impl ChainClient {
             let bytes = encode_extrinsic(&extrinsic);
             let client = self.client();
             match submit_extrinsic(&client, &bytes).await {
-                Ok(hash) => return Ok(hash),
+                Ok(hash) => {
+                    if self
+                        .wait_for_base_inclusion(account, nonce, confirm_timeout, confirm_poll)
+                        .await
+                    {
+                        return Ok(hash);
+                    }
+                    // Confirmed miss: the nonce was not consumed within the budget.
+                    // Heal the lane so the next drip lands immediately. Only lower it
+                    // on a real gap, so we don't clobber a concurrent healer's fresh
+                    // allocation. We return an honest error rather than resubmitting:
+                    // the inclusion signal only resolves at the deadline, so an
+                    // in-request retry would just double the latency — the inline heal
+                    // already restores service for the next request.
+                    let onchain = self.account_nonce_onchain(account).await?;
+                    if onchain > nonce {
+                        return Ok(hash); // landed on the final poll boundary after all
+                    }
+                    if lane.current() > onchain {
+                        lane.resync(onchain);
+                    }
+                    warn!(
+                        "drip nonce {nonce} not included within {}s; healed lane to \
+                         on-chain nonce {onchain}",
+                        confirm_timeout.as_secs()
+                    );
+                    bail!(
+                        "drip nonce {nonce} submitted but not included within {}s",
+                        confirm_timeout.as_secs()
+                    );
+                }
                 Err(err) => {
                     let msg = format!("{err:#}");
                     let stale = msg.contains("outdated")
@@ -176,6 +229,57 @@ impl ChainClient {
             }
         }
         bail!("base submit stale after retries: {last_err}")
+    }
+
+    /// Poll `account`'s **on-chain** nonce until it advances past `nonce` (the chain
+    /// consumed that nonce → our tx was included in a block) or `timeout` elapses.
+    /// The base wallet is faucet-only (single signer), so the tx occupying a given
+    /// nonce is unambiguously ours — no block scan or subscription needed. Returns
+    /// `true` if inclusion was observed within the budget.
+    async fn wait_for_base_inclusion(
+        &self,
+        account: &AccountId,
+        nonce: u32,
+        timeout: Duration,
+        poll: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match self.account_nonce_onchain(account).await {
+                Ok(onchain) if onchain > nonce => return true,
+                Ok(_) => {}
+                Err(err) => warn!("drip inclusion poll failed: {err:#}"),
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(poll).await;
+        }
+    }
+
+    /// The account's nonce as recorded in **on-chain state** at the best block.
+    /// Unlike `system_accountNextIndex` (which is pool-adjusted and advances the
+    /// moment a tx enters the ready queue), this only advances once a tx from the
+    /// account is actually included in a block — so it is the correct signal that a
+    /// drip landed, and it stays put at the gap when a future-nonce tx is stranded.
+    /// Returns 0 if the account does not yet exist.
+    async fn account_nonce_onchain(&self, account: &AccountId) -> Result<u32> {
+        let key = account_storage_key(account);
+        let client = self.client();
+        let raw: Option<String> = client
+            .request("state_getStorage", rpc_params![key])
+            .await
+            .context("querying account nonce")?;
+        match raw {
+            None => Ok(0),
+            Some(encoded) => {
+                let stripped = encoded.strip_prefix("0x").unwrap_or(&encoded);
+                let bytes = hex::decode(stripped).context("decoding account storage")?;
+                let info =
+                    AccountInfo::decode(&mut bytes.as_slice()).context("decoding AccountInfo")?;
+                Ok(info.nonce)
+            }
+        }
     }
 
     /// Build + sign `call` from `signer` with `nonce` WITHOUT submitting; returns
