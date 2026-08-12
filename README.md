@@ -34,9 +34,15 @@ as the `faucet` profile in its docker-compose stack.
 
 | Method & path | Body | Success |
 |---|---|---|
-| `POST /request` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest"}` — faucet mints and broadcasts |
-| `POST /sign` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "mode"}` — receiver broadcasts |
+| `POST /request` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest", "dest_account"}` — faucet mints and broadcasts |
+| `POST /sign` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "dest_account", "mode"}` — receiver broadcasts |
 | `GET /health`   | —    | `200 {"status": "ok"}` |
+
+`dest` accepts an EVM (H160) address as `0x` + 40 hex chars. It is funded
+through its pallet-revive mapped native account (`h160 ++ 0xEE*12`), which is
+what the Ethereum JSON-RPC sidecar reports as the address's balance. The
+resolved native account is returned as `dest_account` in every success
+response.
 
 `/sign` returns a `Balances.transfer_keep_alive` signed by a faucet **pool**
 account (not the funder), for the receiver to submit via `author_submitExtrinsic`.
