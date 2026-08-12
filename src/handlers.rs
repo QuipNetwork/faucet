@@ -111,6 +111,8 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
             &state.base.account,
             &state.base.nonce,
             call,
+            state.cfg.drip_confirm_timeout(),
+            state.cfg.drip_confirm_poll(),
         )
         .await;
     state.gate.release(&key);
