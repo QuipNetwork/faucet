@@ -235,8 +235,7 @@ mod tests {
         // 0x7a718C...4CF9 ++ 0xEE * 12 — the pallet-revive fallback account.
         let (parsed, key) = parse_dest("0x7a718C27469499AaE7c652C0D1A95BD14eCa4CF9")
             .expect("40-hex EVM dest should parse");
-        let expected =
-            "7a718c27469499aae7c652c0d1a95bd14eca4cf9eeeeeeeeeeeeeeeeeeeeeeee";
+        let expected = "7a718c27469499aae7c652c0d1a95bd14eca4cf9eeeeeeeeeeeeeeeeeeeeeeee";
         assert_eq!(
             key,
             format!("0x{expected}"),
