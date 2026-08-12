@@ -56,4 +56,19 @@ mod tests {
         lane.resync(10);
         assert_eq!(lane.allocate(), 10);
     }
+
+    // QUI-831: after a drip is confirmed not to have landed, the lane has run
+    // ahead of the chain (a future-nonce gap). Healing it to the chain's next
+    // index lowers the counter so the next drip refills the gap instead of piling
+    // more stranded future nonces onto the pool.
+    #[test]
+    fn resync_down_refills_a_future_nonce_gap() {
+        let lane = NonceLane::new(5);
+        assert_eq!(lane.allocate(), 5); // nonce 5 submitted but dropped
+        assert_eq!(lane.allocate(), 6); // 6, 7 stranded in the future queue
+        assert_eq!(lane.allocate(), 7);
+        assert_eq!(lane.current(), 8); // lane ahead; chain still expects 5
+        lane.resync(5); // heal to chain next_index
+        assert_eq!(lane.allocate(), 5); // next drip refills the gap at 5
+    }
 }

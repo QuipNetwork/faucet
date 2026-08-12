@@ -85,6 +85,18 @@ pub struct Config {
     #[arg(long, default_value_t = 3)]
     pub base_nonce_stall_checks: u32,
 
+    /// Max seconds `/request` waits to confirm a drip actually landed on-chain
+    /// before treating it as a miss (see `ChainClient::submit_lane`). A drip only
+    /// returns 200 once its nonce is observed consumed on-chain; on a confirmed
+    /// miss the lane is healed inline (so the next drip lands) and an honest 502 is
+    /// returned. Keep this below the client-side request timeout (the health check
+    /// uses 12s), and at or above one block time so healthy drips are not false-missed.
+    #[arg(long, default_value_t = 10.0)]
+    pub drip_confirm_timeout_seconds: f64,
+    /// Seconds between on-chain nonce polls while confirming a drip landed.
+    #[arg(long, default_value_t = 1.0)]
+    pub drip_confirm_poll_seconds: f64,
+
     /// Allow running against non-dev chains (skips the startup name guard). UNSAFE.
     /// The env var takes truthy values (`1`/`true`); `0`, `false`, or empty keep the
     /// guard on — nodes.quip.network's compose stack always sets it (default `0`),
@@ -128,6 +140,14 @@ impl Config {
     }
     pub fn base_nonce_reconcile_interval(&self) -> Duration {
         Duration::from_secs_f64(self.base_nonce_reconcile_interval_seconds)
+    }
+    /// Max wait for a drip to be observed on-chain before it counts as a miss.
+    pub fn drip_confirm_timeout(&self) -> Duration {
+        Duration::from_secs_f64(self.drip_confirm_timeout_seconds)
+    }
+    /// Poll interval while confirming a drip landed.
+    pub fn drip_confirm_poll(&self) -> Duration {
+        Duration::from_secs_f64(self.drip_confirm_poll_seconds)
     }
 }
 

@@ -208,6 +208,8 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
             &state.base.account,
             &state.base.nonce,
             call,
+            state.cfg.drip_confirm_timeout(),
+            state.cfg.drip_confirm_poll(),
         )
         .await
         .context("funding pool account from base")?;
@@ -308,23 +310,19 @@ fn spawn_refresh(state: Arc<AppState>) {
     });
 }
 
-/// Self-heal the base-wallet nonce lane from a stuck future-nonce gap.
+/// Backstop self-heal for a stuck base-wallet future-nonce gap.
 ///
-/// `ChainClient::submit_lane` is fire-and-forget (`author_submitExtrinsic`) and only
-/// resyncs the lane on a *stale* rejection (nonce too low). A *future*-nonce gap — the
-/// lane running ahead of the chain after a submitted tx was accepted into the pool then
-/// dropped (e.g. a node WS reconnect) — is never rejected: every later transfer is
-/// accepted into the pool's *future* queue (so `/request` returns 200 and logs `funded`)
-/// but is never included, and the lane never recovers. The faucet then 200s indefinitely
-/// while delivering nothing. This watchdog detects that and resyncs the lane to chain.
-///
-/// It acts only on a *sustained* stall: the chain's base `next_index` shows no progress
-/// for `base_nonce_stall_checks` consecutive intervals while the lane sits ahead of it.
-/// Normal pipelining (the lane briefly ahead of in-flight, soon-included txs) advances
-/// the chain nonce within a block or two and resets the counter, so steady load never
-/// trips it. (A more thorough alternative is to confirm inclusion via
-/// `author_submitAndWatchExtrinsic` in `submit_lane`; this watchdog is the minimal,
-/// off-the-hot-path fix.)
+/// As of QUI-831, `ChainClient::submit_lane` confirms each drip is consumed on-chain
+/// before returning success and heals the lane inline on a confirmed miss, so a
+/// future-nonce gap — the lane running ahead of the chain after a submitted tx was
+/// accepted into the pool then dropped (e.g. a node WS reconnect) — is normally
+/// repaired within one drip. This watchdog remains as a defence-in-depth net for any
+/// gap that slips past the hot path (e.g. a drip whose caller disconnected before the
+/// inline heal ran): it detects a *sustained* stall — the chain's base `next_index`
+/// showing no progress for `base_nonce_stall_checks` consecutive intervals while the
+/// lane sits ahead of it — and resyncs the lane to chain. Normal pipelining (the lane
+/// briefly ahead of in-flight, soon-included txs) advances the chain nonce within a
+/// block or two and resets the counter, so steady load never trips it.
 fn spawn_base_nonce_reconcile(state: Arc<AppState>) {
     let interval = state.cfg.base_nonce_reconcile_interval();
     let stall_limit = state.cfg.base_nonce_stall_checks;
