@@ -150,7 +150,7 @@ curl -sS -m20 -XPOST https://faucet.testnet.quip.network/request \
 
 curl -s -XPOST https://evm-rpc.testnet.quip.network:20049 -H 'content-type: application/json' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBalance\",\"params\":[\"$evm\",\"latest\"]}"
-# 0x98a7d9b8314c0000 == 1.1e19 wei == 11e12 plancks x NativeToEthRatio (1e6)
+# 0x98a44c398c858000 == 10999000000000000000 wei == 10.999, NOT 11.0 — see below
 
 # Native regression
 d="0x$(openssl rand -hex 32)"
@@ -163,6 +163,23 @@ curl -sS -m20 -XPOST https://faucet.testnet.quip.network/request \
 Drip above 10 tQUIP or the balance gate won't deny the recheck and the "did it land?" signal
 disappears — the same trap that makes `quip-testnet-health`'s default 0.01 tQUIP drip
 false-report.
+
+### `eth_getBalance` reads 0.001 tQUIP LOW, and that is correct
+
+An 11 tQUIP drip shows as `10.999` over the EVM RPC. Don't chase it. `Pallet::evm_balance`
+→ `balance_of` → `account_balance` reports the **spendable** balance, withholding the
+existential deposit (`EXISTENTIAL_DEPOSIT = MILLI_UNIT = 1e9` plancks) that keeps the account
+alive; the ×1e6 `NativeToEthRatio` then scales the difference into wei. Measured 2026-08-13
+on the mapped account of `0xcba85cf7…08dbf`:
+
+```
+System.Account free      = 11000000000000 plancks   (exactly the drip, providers: 1, nonce 0)
+(free - 1e9) x 1e6       = 10999000000000000000 wei
+eth_getBalance returned  = 10999000000000000000 wei  ✓
+```
+
+So confirm the drip against `System.Account` for `dest_account` if you want the exact figure,
+and treat a nonzero `eth_getBalance` as the proof that Ethereum tooling can see the funds.
 
 ## Rollback
 
