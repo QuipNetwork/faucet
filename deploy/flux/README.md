@@ -100,7 +100,24 @@ deployment in `../akash/` (kept for history), which cost ~$6.98/mo against ~$1.7
    In the app's Logs tab expect
    `funder: 5GZMoWFMoNGLZKT1tduLMQQQC7dBQo4MHkYqriCdDATXqaYi`,
    `funder confirmed as chain sudo key`, a base wallet at `5FER…Cjs`, and `pool ready: 8`.
-   Run the full drip verification (below) against the FDM URL at this point.
+   Neither of the two boot-time side effects should fire: the base wallet held ~17,798 tQUIP
+   on 2026-08-13 against a 10,000 tQUIP top-up threshold, so no sudo mint; and pool accounts
+   0–7 are already funded, so the startup scan adopts them rather than re-funding.
+
+   ### ⚠ Keep this overlap short — both deployments share one base wallet
+
+   The base wallet is a fixed hard derivation off the funder SURI
+   (`<funder>//faucet//base`, `src/signer.rs`), and the funder *must* be the chain sudo key or
+   the startup guard aborts. So there is no way to give the Flux instance its own hot wallet:
+   while Akash and Flux both run, two processes hold two in-memory nonce lanes over the *same*
+   account. `submit_lane` treats the resulting collision as a stale nonce, resyncs from chain
+   and retries, so it self-heals per request — but during the overlap the live Akash faucet's
+   drips can cost an extra retry, and a failed verification drip here is ambiguous.
+
+   So verify **lightly** before the cutover: `/health`, the startup log lines, and **one** EVM
+   drip plus its `eth_getBalance` (that is the whole point of the release). Save the 12
+   sequential + 8 concurrent soak for after the cutover, when only one faucet is serving.
+   Minutes of overlap, not hours.
 
 ## DNS cutover
 
