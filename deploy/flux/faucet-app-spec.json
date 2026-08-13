@@ -7,7 +7,7 @@
     {
       "name": "faucet",
       "description": "Rust quip-faucet. Funder is op-1's hybrid account (the chain sudo key); it sudo-mints a dedicated base wallet, funds the /sign pool, and serves /request, /sign, /health over plain HTTP. TLS is terminated by Flux FDM at the custom domain.",
-      "repotag": "registry.gitlab.com/quip.network/faucet:qui1028-rc1-amd64@sha256:<REPLACE-amd64-digest>",
+      "repotag": "registry.gitlab.com/quip.network/faucet:qui1028-rc1-amd64@sha256:ca65cf5ba2560b4831a088588f8b097987e8a16a9004246528b599575d01c18d",
       "ports": [
         8087
       ],
