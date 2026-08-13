@@ -58,15 +58,33 @@ deployment in `../akash/` (kept for history), which cost ~$6.98/mo against ~$1.7
    `enterprise` blob). Take a **1-month first term** — Flux subscriptions are prepaid and
    non-refundable. Confirm the quote before paying:
 
+   Confirm the quote first. The endpoint is POST-only and needs `expire` and `contacts`
+   present. **Send the template, never `faucet.filled.json`** — price does not depend on env
+   values and the filled copy carries the sudo mnemonic.
+
    ```bash
-   # POST-only; needs owner + contacts. Run a control arm so you know it discriminates.
-   curl -s -X POST -H 'Content-Type: text/plain' \
-     --data-binary @faucet.filled.json \
+   python3 -c "
+   import json; s=json.load(open('faucet-app-spec.json'))
+   s['enterprise']=''; s['expire']=88000
+   s['contacts']=['F_S_CONTACTS=https://storage.runonflux.io/v1/contacts/94469486508667']
+   print(json.dumps(s))" > /tmp/q.json
+   curl -s -X POST -H 'Content-Type: text/plain' --data-binary @/tmp/q.json \
      https://api.runonflux.io/apps/calculatefiatandfluxprice
    ```
 
-   Expected ≈ $1.75/mo: `cpu 1×1.50 + ram 2048×0.0005 + hdd 1×0.02 + 4.00 enterprise
-   = 6.544`, `/3 = 2.19`, `×0.8` (instances < 4, cpu < 3, ram < 6000, hdd < 150).
+   Measured 2026-08-13, with a control arm so we know the quote discriminates:
+
+   | spec | quoted |
+   |---|---|
+   | `cpu 1 / ram 2048 / hdd 1` (this app, non-enterprise) | **$0.99/mo** — the price floor |
+   | `cpu 0.5 / ram 512 / hdd 1` | $0.99/mo — same floor, so downsizing saves nothing |
+   | `cpu 2 / ram 8192 / hdd 20` (control) | $2.25/mo |
+
+   The calculator can't price Enterprise without a blob, so add it by formula: enterprise is
+   +4.00 on the total *before* the `/3` divisor, giving `(1.50 + 1.024 + 0.02 + 4.00) / 3 =
+   2.19`, `×0.8` (instances < 4, cpu < 3, ram < 6000, hdd < 150) ≈ **$1.75/mo** against
+   **$6.98/mo** on Akash. Because that flat +4.00 dominates and the non-enterprise price is
+   already at the floor, the 2048 MB is free headroom — don't shave it.
 
 4. **Verify before touching DNS.** Akash keeps serving the real hostname until step 5, so a
    broken app here costs nothing:
