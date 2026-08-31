@@ -40,7 +40,7 @@ as the `faucet` profile in its docker-compose stack.
 
 `/sign` returns a `Balances.transfer_keep_alive` signed by a faucet **pool**
 account (not the funder), for the receiver to submit via `author_submitExtrinsic`.
-It is signed with an immortal era and is **single-use**: submit it promptly —
+It is signed with the runtime's mortal era and is **single-use**: submit it promptly —
 it is rejected as stale if that pool account is reused first; just call `/sign`
 again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
 (sr25519 + FN-DSA-512), so they are larger than vanilla sr25519 transactions.
