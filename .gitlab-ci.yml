@@ -5,7 +5,7 @@
 # publishes quip-network-node: one image per architecture built on a native
 # runner, stitched into a manifest list so a single tag serves both.
 #
-# The faucet pulls the *private* quip-protocol-rs over git and compiles the
+# The faucet pulls the *private* quip-validator runtime over git and compiles the
 # substrate runtime, so each architecture is built in two steps instead of
 # from source inside the Dockerfile:
 #   build-binary-<arch>   compiles target/release/quip-faucet in the substrate
@@ -96,9 +96,9 @@ cargo-test:
     # image already ships the target/component, so these are no-ops there).
     - rustup target add wasm32v1-none
     - rustup component add rust-src
-    # The faucet depends on the private quip-protocol-rs over ssh; in CI fetch it
+    # The faucet depends on the private quip-validator repo over ssh; in CI fetch it
     # over https with the job token instead. Requires this project's CI_JOB_TOKEN
-    # to be allowed by quip-protocol-rs (Settings → CI/CD → Job token permissions).
+    # to be allowed by quip-validator (Settings → CI/CD → Job token permissions).
     - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/".insteadOf "ssh://git@gitlab.com/"
   script:
     - cargo fmt --all -- --check

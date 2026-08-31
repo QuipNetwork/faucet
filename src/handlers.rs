@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, Json};
 use quip_protocol_runtime::AccountId;
-use quip_tools::format_hash;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use tracing::{error, info};
 
-use crate::{calls, gate::GateDecision, AppState};
+use crate::{calls, client::format_hash, gate::GateDecision, AppState};
 
 type Reply = (StatusCode, Json<Value>);
 
