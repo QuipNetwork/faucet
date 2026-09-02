@@ -1,0 +1,97 @@
+{
+  "_comment": [
+    "QUI-1226 — Flux v8 spec for the AGLAIS testnet faucet, a NEW SIBLING app run in parallel",
+    "with the live `quipfaucet` during the network reset. Derived from the live dashboard export",
+    "2026-09-02; every field below matches it except the ones listed under CHANGED.",
+    "",
+    "Starting point for the dashboard wizard ONLY — the canonical spec is always the export.",
+    "",
+    "CHANGED vs the live quipfaucet:",
+    "  name/description  -> aglais",
+    "  repotag           -> built from integration/qui-1226-faucet-aglais (main + !15 + !16)",
+    "  domains           -> faucet.aglais.quip.network",
+    "  commands          -> --node-url points at the three AGLAIS bootnodes",
+    "",
+    "UNCHANGED and deliberate: ports/containerPorts 8087, containerData /data, cpu 1 /",
+    "ram 2048 / hdd 1, instances 1, staticip false, repoauth \"\" (the registry is public),",
+    "geolocation [acEU, acNA, a!cEU_RU], and the funder key (op-1 = chain sudo).",
+    "",
+    "🔴 WHY A SEPARATE APP: repointing the live quipfaucet's --node-url would take the EXISTING",
+    "testnet's faucet offline. The two chains run in parallel, so both need their own.",
+    "",
+    "🔴 THE FUNDER IS THE SAME ACCOUNT ON BOTH CHAINS. Verified 2026-09-02: aglais Sudo::Key is",
+    "0xc5c1e685e181d2939fddaf43e61455c0f00a99d2716d59b1f90674e5c0292510 — the same op-1 account",
+    "that is sudo on the live testnet. Balances and nonces are per-chain so they cannot collide,",
+    "but see the next note, because nothing in the faucet will catch a mis-aimed deploy.",
+    "",
+    "🔴 `--allow-any-chain` IS NOT A CHAIN PIN. It only disables verify_dev_chain(), which refuses",
+    "any system_chain not starting with a dev prefix (chain.rs:405-413) — production has to set it.",
+    "With it on there is NO genesis or chain-identity check anywhere in the faucet. Combined with a",
+    "funder that is sudo on BOTH chains, a wrong --node-url here would silently mint on the wrong",
+    "network. The three URLs below are the only thing aiming this app: check them by eye, and after",
+    "deploy confirm the running faucet's target rather than assuming.",
+    "",
+    "BEFORE DEPLOYING:",
+    "  1. repotag digest — build + push, then pin `repo:TAG@sha256:DIGEST`. A bare `repo@sha256:`",
+    "     is REJECTED by Flux.",
+    "  2. Enterprise ON — QUIP_FAUCET_FAUCET_KEY is the chain sudo key; empty `enterprise` ships",
+    "     it as PLAINTEXT env. The toggle generates the blob at submit; it is not a pasted value.",
+    "  3. Create the faucet.aglais.quip.network CNAME to the new app's FDM name once registered.",
+    "     TLS is terminated by Flux FDM at the custom domain — there is no certifier/Tarsnap leg",
+    "     here, unlike the bootnodes.",
+    "  4. No environmentParameters value may be empty — Flux rejects the whole submission.",
+    "",
+    "REPLACE every <REPLACE:...> before use."
+  ],
+  "version": 8,
+  "name": "quipfaucetaglais",
+  "description": "Quip aglais testnet faucet: native (SS58 / 0x+64-hex) and EVM (0x+40-hex) funding",
+  "owner": "1H18UuAxugZihfoagL8xNT1Rpxn55dZtZ3",
+  "compose": [
+    {
+      "name": "faucet",
+      "description": "Rust quip-faucet. Funder is op-1's hybrid account (the chain sudo key); it sudo-mints a dedicated base wallet, funds the /sign pool, and serves /request, /sign, /health over plain HTTP. TLS is terminated by Flux FDM at the custom domain.",
+      "repotag": "registry.gitlab.com/quip.network/faucet:qui1226-trial-2da7c89-amd64@sha256:713f52cf22c13d63001da367f4d4d327f3ff209c80944cb4f57ad948a2bccc63",
+      "ports": [
+        8087
+      ],
+      "domains": [
+        "faucet.aglais.quip.network"
+      ],
+      "environmentParameters": [
+        "QUIP_FAUCET_FAUCET_KEY=<REPLACE:op-1 mnemonic from Proton Pass — same funder as the live faucet>",
+        "RUST_LOG=info"
+      ],
+      "commands": [
+        "--node-url=wss://bootnode-1.aglais.quip.network:20049/rpc",
+        "--node-url=wss://bootnode-2.aglais.quip.network:20049/rpc",
+        "--node-url=wss://bootnode-3.aglais.quip.network:20049/rpc",
+        "--listen-host=0.0.0.0",
+        "--port=8087",
+        "--rate-limit-seconds=60",
+        "--allow-any-chain"
+      ],
+      "containerPorts": [
+        8087
+      ],
+      "containerData": "/data",
+      "cpu": 1,
+      "ram": 2048,
+      "hdd": 1,
+      "repoauth": "",
+      "secrets": ""
+    }
+  ],
+  "instances": 1,
+  "contacts": [
+    "F_S_CONTACTS=https://storage.runonflux.io/v1/contacts/892592545351050"
+  ],
+  "geolocation": [
+    "acEU",
+    "acNA",
+    "a!cEU_RU"
+  ],
+  "nodes": [],
+  "staticip": false,
+  "enterprise": "<REPLACE:NOT a value you paste — flip the Enterprise toggle in the wizard's General tab, which generates the blob at submit. Leaving this off ships the chain sudo key as PLAINTEXT env>"
+}
