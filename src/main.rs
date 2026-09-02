@@ -7,6 +7,7 @@
 
 mod calls;
 mod chain;
+mod client;
 mod config;
 mod gate;
 mod handlers;

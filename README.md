@@ -46,9 +46,10 @@ response.
 
 `/sign` returns a `Balances.transfer_keep_alive` signed by a faucet **pool**
 account (not the funder), for the receiver to submit via `author_submitExtrinsic`.
-It is signed with an immortal era and is **single-use**: submit it promptly —
+It is signed with the runtime's mortal era and is **single-use**: submit it promptly —
 it is rejected as stale if that pool account is reused first; just call `/sign`
-again for a fresh one. Hybrid-chain responses are ~8 KB (ML-DSA-44 signature).
+again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
+(sr25519 + FN-DSA-512), so they are larger than vanilla sr25519 transactions.
 
 ### Status codes
 
@@ -109,7 +110,7 @@ nodes are assumed to be replicas of the same chain.
 
 ## Run locally
 
-Needs SSH access to the private `quip-protocol-rs` repo (`.cargo/config.toml`
+Needs SSH access to the private `quip-validator` repo (`.cargo/config.toml`
 uses the git CLI for auth).
 
 ```bash
@@ -173,17 +174,24 @@ window, up to `--pool-max-size`. Tune the pool with `--pool-size`,
 Auto-detected from chain metadata at startup:
 
 - **sr25519** — vanilla `MultiSignature` chains.
-- **hybrid** — `HybridTxSignature` chains (sr25519 + ML-DSA-44, FIPS 204).
+- **hybrid** — H4 `HybridTxSignature` chains (sr25519 + FN-DSA-512).
 
 Either way the funder key is derived from its SURI (`//Alice`, a raw seed, or a
-mnemonic) via the shared `quip-transaction-crypto`/`quip-tools` crates, and the
-pool and base accounts are hard-derived from it — so the signed extrinsic
-envelope always matches the chain, with no hardcoded dev-seed table.
+mnemonic) via `quip-transaction-crypto`; the local R2-native transaction helper
+uses the runtime's exported signed-extension tuple. The pool and base accounts
+are hard-derived from the funder, so the signed extrinsic envelope always
+matches the chain, with no hardcoded dev-seed table.
+
+The H3-to-H4 migration preserves SURI and mnemonic formats, but the new suite
+derives different hybrid public keys and therefore different funder, base, and
+pool account IDs from the same secret. Run this faucet against an R2 chain whose
+`Sudo.Key` was initialized for H4; the startup sudo-key check fails fast if the
+configured key belongs to the old account domain.
 
 ## Build, test & CI
 
 Needs SSH access (local) or a CI job token to fetch the private
-`quip-protocol-rs` dependency. Unit tests mock the chain, so no node is required.
+`quip-validator` dependency. Unit tests mock the chain, so no node is required.
 
 ```bash
 cargo fmt --all -- --check

@@ -10,57 +10,50 @@ description = "Concurrent dev faucet for Quip substrate chains (tokio + jsonrpse
 name = "quip-faucet"
 path = "src/main.rs"
 
-# --- Quip crates (pinned to the network-upgrade-cli branch that carries
-# crates/tools; re-pin to a stable tag/main once MR !32 merges). ---
+# --- Quip runtime + H4 transaction stack (R2). ---
 [dependencies.quip-protocol-runtime]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
-default-features = false
-features = ["std"]
-
-[dependencies.quip-tools]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
-# --- polkadot-sdk fork: declared with the SAME branch spec the quip crates use,
+# --- polkadot-sdk fork (R1): declared at the SAME revision the R2 crates use,
 # so cargo unifies every substrate crate to one commit (no duplicate-type hell). ---
 [dependencies.frame-system]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.pallet-balances]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.pallet-sudo]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.sp-core]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std", "serde"]
 
 [dependencies.sp-runtime]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std", "serde"]
 
 [dependencies]
