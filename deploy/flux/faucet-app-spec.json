@@ -1,0 +1,49 @@
+{
+  "version": 8,
+  "name": "quipfaucet",
+  "description": "Quip testnet faucet: native (SS58 / 0x+64-hex) and EVM (0x+40-hex) funding",
+  "owner": "1H18UuAxugZihfoagL8xNT1Rpxn55dZtZ3",
+  "compose": [
+    {
+      "name": "faucet",
+      "description": "Rust quip-faucet. Funder is op-1's hybrid account (the chain sudo key); it sudo-mints a dedicated base wallet, funds the /sign pool, and serves /request, /sign, /health over plain HTTP. TLS is terminated by Flux FDM at the custom domain.",
+      "repotag": "registry.gitlab.com/quip.network/faucet:qui1028-rc1-amd64@sha256:ca65cf5ba2560b4831a088588f8b097987e8a16a9004246528b599575d01c18d",
+      "ports": [
+        8087
+      ],
+      "domains": [
+        "faucet.testnet.quip.network"
+      ],
+      "environmentParameters": [
+        "QUIP_FAUCET_FAUCET_KEY=<operator-1-mnemonic>",
+        "RUST_LOG=info"
+      ],
+      "commands": [
+        "--node-url=wss://bootnode-1.testnet.quip.network:20049/rpc",
+        "--node-url=wss://bootnode-2.testnet.quip.network:20049/rpc",
+        "--node-url=wss://bootnode-3.testnet.quip.network:20049/rpc",
+        "--listen-host=0.0.0.0",
+        "--port=8087",
+        "--rate-limit-seconds=60",
+        "--allow-any-chain"
+      ],
+      "containerPorts": [
+        8087
+      ],
+      "containerData": "/data",
+      "cpu": 1,
+      "ram": 2048,
+      "hdd": 1,
+      "repoauth": "",
+      "secrets": ""
+    }
+  ],
+  "instances": 1,
+  "contacts": [],
+  "geolocation": [
+    "a!cEU_RU"
+  ],
+  "nodes": [],
+  "staticip": false,
+  "enterprise": "<set-by-the-dashboard-Enterprise-toggle-at-submit>"
+}

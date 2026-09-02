@@ -8,3 +8,8 @@
 
 # Build context only — vendored from sibling repo for deploy/akash/Dockerfile.caddy
 deploy/akash/dnsimple-certifier/
+
+# The deployable Flux spec once <REPLACE-...> / <operator-1-mnemonic> are filled: it carries
+# op-1's mnemonic (the chain sudo key) in environmentParameters, so the filled copy is a
+# secret even though deploy/flux/faucet-app-spec.json is not. This repo is public.
+deploy/flux/*.filled.json

@@ -1,4 +1,16 @@
-# `faucet.testnet.quip.network` on Akash (v2)
+# `faucet.testnet.quip.network` on Akash (v2) — **RETIRED 2026-08-13**
+
+> **This deployment is no longer live.** The faucet moved to Flux on 2026-08-13 (QUI-1028) —
+> see [`../flux/README.md`](../flux/README.md). Akash cost ~$6.98/mo against ~$1.75/mo there, and
+> the move also deleted this directory's entire reason for existing: the caddy TLS terminator, the
+> dnsimple-certifier calls and the Tarsnap cert persistence are all replaced by Flux FDM issuing
+> and auto-renewing the certificate at the edge. The Akash provider's SNAT is what forced the
+> manual cert renewal in August 2026; that failure mode is gone with the host.
+>
+> Kept for history, and because the SDL documents the arg/env/secret set the Flux spec inherited.
+> Lease `27496807` (Hurricane) is held briefly after the cutover as the rollback path — a DNS
+> revert to `A 184.105.162.182` restores service in a minute — and is closed once the Flux app has
+> proven itself, which returns the unspent escrow.
 
 Deployment artifacts for the post-`v1`-teardown faucet, using:
 
