@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Runtime image for the Rust faucet. The release binary is compiled outside the
 # image — by CI's per-arch `build-binary-<arch>` jobs (substrate toolchain +
-# job-token auth for the private quip-protocol-rs dep) — and dropped in as
+# job-token auth for the private quip-validator dep) — and dropped in as
 # `./quip-faucet`. This image only packages it, so it carries no toolchain,
 # git, or credentials. Arch-neutral: CI builds it once per architecture
 # (amd64/arm64) from the matching binary.
