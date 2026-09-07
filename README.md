@@ -149,6 +149,47 @@ Runtime environment variables (all optional):
   environments.
 - `QUIP_FAUCET_FAUCET_KEY` — same as `--faucet-key`.
 
+### Telemetry
+
+The faucet can ship its own log records to a
+[OneUptime](https://observe.quip.network) instance over OTLP/HTTP, in addition
+to writing them to stdout as before. The reason is the audit trail: every
+dispense is a use of the chain's sudo key, and on Flux the console those records
+live in is wiped on every update — not only when the app moves — and cannot be
+recovered afterwards.
+
+It is **off unless both the endpoint and the key are set**, so local runs, tests
+and CI ship nothing.
+
+- `TELEMETRY_ENDPOINT` — base URL, no signal path. The image bakes
+  `https://observe.quip.network/telemetry/otlp`. The exporter appends
+  `/v1/logs`.
+  ⚠ It must be `/telemetry/otlp` and not `/otlp`. Both are mounted and both
+  authenticate, so the wrong one works until a batch exceeds 1 MiB and nginx
+  returns a 413 that never reaches the application.
+- `ONEUPTIME_TELEMETRY_KEY` — a Telemetry Ingestion Key (UUID), sent as the
+  `x-oneuptime-token` header. Read from the environment only, never a CLI flag,
+  so it cannot land on a process's argv.
+- `TELEMETRY_SERVICE_NAME` — defaults to `quipfaucet`; also used as
+  `host.name`, deliberately constant so a relocation does not mint a new host.
+- `DISABLE_TELEMETRY=1` — kill switch, no rebuild needed. Parsed like
+  `QUIP_FAUCET_ALLOW_ANY_CHAIN`, so `0`/`false`/empty leave telemetry on.
+
+Only `https://` endpoints are accepted, apart from loopback for local testing;
+the key is a bearer credential and is not sent over plaintext. If the exporter
+cannot be built the faucet logs why and serves anyway — telemetry never stops it
+dispensing.
+
+To see what it actually puts on the wire, point it at the throwaway sink in
+`bootnodes.quip.network/deploy/flux/smoke/otlp-sink.py`:
+
+```bash
+TELEMETRY_ENDPOINT=http://127.0.0.1:4318 \
+TELEMETRY_SERVICE_NAME=quipfaucet-local \
+ONEUPTIME_TELEMETRY_KEY=11111111-2222-3333-4444-555555555555 \
+    ./target/debug/quip-faucet --node-url ws://127.0.0.1:9944 --faucet-key //Alice
+```
+
 For the full stack (validator + faucet behind Caddy), see
 [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 and run `docker compose --profile validator-cpu --profile faucet up -d`.

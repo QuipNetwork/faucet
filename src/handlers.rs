@@ -75,27 +75,76 @@ fn validate(req: &FundRequest, default_amount: u128) -> Result<(AccountId, Strin
     Ok((account, key, amount))
 }
 
-fn map_gate(decision: &GateDecision) -> Option<Reply> {
+fn throttled(retry_after: f64) -> Reply {
+    reply(
+        StatusCode::TOO_MANY_REQUESTS,
+        json!({ "error": "rate limited", "retry_after_seconds": retry_after }),
+    )
+}
+
+/// Turn a refusal into a reply, and record it.
+///
+/// Refusals are logged here rather than in `gate.rs` because this is the single
+/// funnel both routes pass through, and the only place that knows *which* route
+/// was refused. `RateLimited` and `Degraded` answer identically on the wire but
+/// are separated in the record: the second one means the balance query failed and
+/// the gate fell back to its strict window, which is a fact about the chain
+/// connection, not about the caller.
+fn map_gate(decision: &GateDecision, route: &str, dest_account: &str) -> Option<Reply> {
     match decision {
         GateDecision::Allow => None,
-        GateDecision::RateLimited { retry_after } | GateDecision::Degraded { retry_after } => {
+        GateDecision::RateLimited { retry_after } => {
+            info!(
+                route,
+                dest_account,
+                retry_after_seconds = retry_after,
+                outcome = "rate_limited",
+                "faucet refused"
+            );
+            Some(throttled(*retry_after))
+        }
+        GateDecision::Degraded { retry_after } => {
+            info!(
+                route,
+                dest_account,
+                retry_after_seconds = retry_after,
+                outcome = "degraded",
+                "faucet refused"
+            );
+            Some(throttled(*retry_after))
+        }
+        GateDecision::InFlight => {
+            info!(route, dest_account, outcome = "in_flight", "faucet refused");
             Some(reply(
                 StatusCode::TOO_MANY_REQUESTS,
-                json!({ "error": "rate limited", "retry_after_seconds": retry_after }),
+                json!({ "error": "request already in flight for this dest" }),
             ))
         }
-        GateDecision::InFlight => Some(reply(
-            StatusCode::TOO_MANY_REQUESTS,
-            json!({ "error": "request already in flight for this dest" }),
-        )),
-        GateDecision::Funded { free } => Some(reply(
-            StatusCode::FORBIDDEN,
-            json!({ "error": "destination already funded", "free_balance_plancks": free }),
-        )),
-        GateDecision::Unavailable => Some(reply(
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({ "error": "balance check unavailable" }),
-        )),
+        GateDecision::Funded { free } => {
+            info!(
+                route,
+                dest_account,
+                free_balance_plancks = %free,
+                outcome = "already_funded",
+                "faucet refused"
+            );
+            Some(reply(
+                StatusCode::FORBIDDEN,
+                json!({ "error": "destination already funded", "free_balance_plancks": free }),
+            ))
+        }
+        GateDecision::Unavailable => {
+            info!(
+                route,
+                dest_account,
+                outcome = "balance_check_unavailable",
+                "faucet refused"
+            );
+            Some(reply(
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "error": "balance check unavailable" }),
+            ))
+        }
     }
 }
 
@@ -106,7 +155,7 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     };
 
     let decision = state.gate.check(&key, &account, &state.chain).await;
-    if let Some(resp) = map_gate(&decision) {
+    if let Some(resp) = map_gate(&decision, "/request", &key) {
         return resp;
     }
 
@@ -129,14 +178,35 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     match result {
         Ok(hash) => {
             state.gate.commit(&key);
-            info!("funded {key} amount={amount}");
+            let extrinsic_hash = format_hash(&hash);
+            // The audit record. `amount` is u128 and `tracing` has no native
+            // value for it, so it goes over as an exact decimal string rather
+            // than being narrowed. The extrinsic hash was previously returned to
+            // the caller and never logged, which left the record unable to name
+            // the transaction it describes.
+            info!(
+                route = "/request",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                extrinsic_hash = %extrinsic_hash,
+                outcome = "dispensed",
+                "faucet dispensed"
+            );
             reply(
                 StatusCode::OK,
-                json!({ "extrinsic_hash": format_hash(&hash), "amount": amount, "dest": req.dest, "dest_account": key }),
+                json!({ "extrinsic_hash": extrinsic_hash, "amount": amount, "dest": req.dest, "dest_account": key }),
             )
         }
         Err(submit_err) => {
-            error!("/request submit failed: {submit_err:#}");
+            error!(
+                route = "/request",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                outcome = "submit_failed",
+                "/request submit failed: {submit_err:#}"
+            );
             err(StatusCode::BAD_GATEWAY, "transfer failed; see faucet logs")
         }
     }
@@ -149,7 +219,7 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
     };
 
     let decision = state.gate.check(&key, &account, &state.chain).await;
-    if let Some(resp) = map_gate(&decision) {
+    if let Some(resp) = map_gate(&decision, "/sign", &key) {
         return resp;
     }
 
@@ -187,11 +257,26 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
             // Optimistic: a handed-out tx is equivalent to funding.
             state.gate.commit(&key);
             state.pool.complete(allocated.index, amount, nonce);
+            let extrinsic_hash = format_hash(&hash);
+            // `/sign` hand-outs were entirely invisible before this. The signed
+            // extrinsic itself is deliberately NOT logged: it is a replayable
+            // artifact, and the hash identifies it just as well.
+            info!(
+                route = "/sign",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                extrinsic_hash = %extrinsic_hash,
+                from = %allocated.account.to_ss58check(),
+                nonce,
+                outcome = "signed",
+                "faucet signed"
+            );
             reply(
                 StatusCode::OK,
                 json!({
                     "signed_extrinsic": signed_extrinsic,
-                    "extrinsic_hash": format_hash(&hash),
+                    "extrinsic_hash": extrinsic_hash,
                     "nonce": nonce,
                     "from": allocated.account.to_ss58check(),
                     "amount": amount,
