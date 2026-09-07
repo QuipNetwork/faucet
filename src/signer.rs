@@ -2,8 +2,9 @@
 
 use anyhow::Result;
 use quip_protocol_runtime::AccountId;
-use quip_tools::{pair_from_suri, signer_account};
 use quip_transaction_crypto::HybridPair;
+
+use crate::client::{pair_from_suri, signer_account};
 
 /// The funded sudo key the faucet signs/derives from.
 pub struct Funder {

@@ -1,7 +1,23 @@
 {
+  "_comment": [
+    "🔴 SUPERSEDED — HISTORICAL RECORD ONLY. DO NOT SUBMIT THIS.",
+    "",
+    "This describes the faucet as it was when it served the OLD testnet chain. The app name",
+    "`quipfaucet` is still the LIVE app, but it was repointed at aglais: it now serves",
+    "faucet.aglais.quip.network against the aglais bootnodes. `faucet.testnet.quip.network`",
+    "no longer resolves at all (verified 2026-09-07).",
+    "",
+    "Submitting this file would therefore aim the live faucet back at the retired chain and",
+    "drop its working domain. The sudo-key guard would refuse to serve there — the two chains",
+    "have different Sudo::Key values — so it would fail closed rather than mint wrongly, but it",
+    "would still be an outage.",
+    "",
+    "The live spec is deploy/flux/faucet-aglais-app-spec.json. The canonical one is always the",
+    "dashboard export."
+  ],
   "version": 8,
   "name": "quipfaucet",
-  "description": "Quip testnet faucet: native (SS58 / 0x+64-hex) and EVM (0x+40-hex) funding",
+  "description": "Quip testnet faucet (RETIRED CHAIN — see _comment): native (SS58 / 0x+64-hex) and EVM (0x+40-hex) funding",
   "owner": "1H18UuAxugZihfoagL8xNT1Rpxn55dZtZ3",
   "compose": [
     {

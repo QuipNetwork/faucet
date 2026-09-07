@@ -7,12 +7,14 @@
 
 mod calls;
 mod chain;
+mod client;
 mod config;
 mod gate;
 mod handlers;
 mod nonce;
 mod pool;
 mod signer;
+mod telemetry;
 
 use std::{sync::Arc, time::Duration};
 
@@ -22,11 +24,14 @@ use axum::{
     Router,
 };
 use clap::Parser;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use quip_protocol_runtime::AccountId;
 use quip_transaction_crypto::HybridPair;
 use sp_core::crypto::Ss58Codec;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{
+    filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
 
 use crate::{
     chain::ChainClient,
@@ -60,11 +65,29 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+    // Telemetry is resolved before the subscriber is built, because it
+    // contributes a layer. It therefore cannot log its own outcome, and hands
+    // back a notice for us to emit as soon as the subscriber exists.
+    let startup = telemetry::init();
+    let otel_layer = startup.telemetry.as_ref().map(|telemetry| {
+        // Drop the OpenTelemetry crates' own tracing output before it reaches the
+        // bridge. `internal-logs` is off in our feature set, but Cargo unifies
+        // features across the whole graph, so a future dependency could switch it
+        // back on — and an exporter that logs through the bridge feeding it is an
+        // unbounded loop.
+        OpenTelemetryTracingBridge::new(telemetry.provider()).with_filter(filter_fn(|meta| {
+            !meta.target().starts_with("opentelemetry")
+        }))
+    });
+
+    // The filter goes on the registry rather than on one layer, so RUST_LOG means
+    // the same thing for the console and for what we ship.
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(tracing_subscriber::fmt::layer())
+        .with(otel_layer)
         .init();
+    info!("{}", startup.notice);
 
     let cfg = Config::parse();
     if cfg.allow_any_chain {
@@ -133,8 +156,52 @@ async fn main() -> Result<()> {
         "faucet listening on http://{addr} pool={}",
         state.pool.len()
     );
-    axum::serve(listener, app).await.context("serving")?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("serving")?;
+
+    // Flush what is still queued. Without this the records from the minutes
+    // before a redeploy — the ones most likely to explain it — are dropped, and
+    // a redeploy is the single most common way this process ends.
+    if let Some(telemetry) = &startup.telemetry {
+        match telemetry.shutdown() {
+            Ok(()) => info!("telemetry flushed"),
+            Err(err) => warn!("telemetry shutdown failed: {err}"),
+        }
+    }
     Ok(())
+}
+
+/// Resolve on SIGTERM — how Docker, and therefore Flux, stops a container — or on
+/// Ctrl-C when run by hand. `tini` is PID 1 and `entrypoint.sh` execs, so the
+/// signal does reach this process rather than a shell.
+async fn shutdown_signal() {
+    let interrupt = async {
+        if tokio::signal::ctrl_c().await.is_err() {
+            // No handler could be installed; leave it to SIGTERM.
+            std::future::pending::<()>().await;
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut term) => {
+                let _ = term.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => {}
+        _ = terminate => {}
+    }
+    info!("shutdown signal received; draining");
 }
 
 /// Derive + fund the pool before binding, then adopt any contiguous funded prefix

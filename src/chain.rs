@@ -1,6 +1,6 @@
 //! Node client: connection + failover, cached context, balance query, submission.
 //!
-//! Reuses `quip-tools` for the proven build/sign/submit path and wraps it with
+//! Uses the R2-native client helpers for build/sign/submit and wraps them with
 //! multi-node failover and a cached chain context. jsonrpsee multiplexes
 //! concurrent requests over one connection, so there is no global lock.
 
@@ -12,6 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::client::{
+    build_signed_extrinsic, encode_extrinsic, fetch_chain_context, submit_extrinsic, ws_client,
+    ChainContext,
+};
 use anyhow::{bail, Context, Result};
 use codec::{Decode, Encode};
 use jsonrpsee::{
@@ -20,10 +24,6 @@ use jsonrpsee::{
 };
 use parking_lot::RwLock;
 use quip_protocol_runtime::{AccountId, Hash, RuntimeCall};
-use quip_tools::{
-    build_signed_extrinsic, encode_extrinsic, fetch_chain_context, submit_extrinsic, ws_client,
-    ChainContext,
-};
 use quip_transaction_crypto::HybridPair;
 use sp_core::{
     crypto::Ss58Codec,

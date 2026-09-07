@@ -10,57 +10,50 @@ description = "Concurrent dev faucet for Quip substrate chains (tokio + jsonrpse
 name = "quip-faucet"
 path = "src/main.rs"
 
-# --- Quip crates (pinned to the network-upgrade-cli branch that carries
-# crates/tools; re-pin to a stable tag/main once MR !32 merges). ---
+# --- Quip runtime + H4 transaction stack (R2). ---
 [dependencies.quip-protocol-runtime]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
-default-features = false
-features = ["std"]
-
-[dependencies.quip-tools]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
-git = "ssh://git@gitlab.com/quip.network/quip-protocol-rs.git"
-rev = "edc936994104dbfaf3d6d23bb5dfd4d285cca33d"
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
 default-features = false
 features = ["std"]
 
-# --- polkadot-sdk fork: declared with the SAME branch spec the quip crates use,
+# --- polkadot-sdk fork (R1): declared at the SAME revision the R2 crates use,
 # so cargo unifies every substrate crate to one commit (no duplicate-type hell). ---
 [dependencies.frame-system]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.pallet-balances]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.pallet-sudo]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std"]
 
 [dependencies.sp-core]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std", "serde"]
 
 [dependencies.sp-runtime]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-branch = "v0.2"
+rev = "30810786a6610de8798594bbc5d4f00670744c6d"
 features = ["std", "serde"]
 
 [dependencies]
@@ -76,6 +69,54 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 hex = "0.4.3"
 parking_lot = "0.12"
+
+# --- Telemetry (QUI-1225) -----------------------------------------------------
+# Ship the faucet's `tracing` records to OneUptime as OTLP logs, so the record of
+# every mint outlives the Flux console it currently lives in (that console is
+# wiped on every update, not just on relocation, and cannot be backfilled).
+#
+# Deliberately narrow, and each narrowing is load-bearing:
+#
+# * `logs` only, everywhere. No traces, no metrics -- the faucet is stateless
+#   with hdd:1, so there is no disk series worth having, and nothing here is
+#   distributed enough to trace.
+# * `http-proto` over HTTP, never `grpc-tonic`: gRPC would add tonic + prost
+#   (and protoc) to a build that already takes ~700s per arch in CI.
+# * `reqwest-blocking-client` is the crate default and the right one HERE. The
+#   BatchLogProcessor exports from its own dedicated OS thread, so "blocking"
+#   never touches the tokio executor the request path runs on. The async
+#   `reqwest-client` would need a reactor on that thread.
+# * reqwest is named directly ONLY to choose TLS. opentelemetry-otlp declares it
+#   `default-features = false` and enables no TLS feature, so HTTPS would fail
+#   outright without this line.
+#
+# 🔴 `rustls-no-provider`, NOT `rustls`. reqwest's `rustls` feature pulls in
+# aws-lc-rs, and jsonrpsee already links rustls with *ring*. Two providers in one
+# binary make rustls' process-level default ambiguous, which would put the
+# faucet's own WSS connection to the bootnodes -- its actual job -- at risk to
+# buy nothing. `rustls-no-provider` reuses the ring provider already present.
+# Invariant, asserted in CI and by `make verify-tls-provider`:
+#     cargo tree -i aws-lc-rs  =>  empty
+#     cargo tree -i ring       =>  present
+opentelemetry = { version = "0.32", default-features = false, features = ["logs"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = [
+    "logs",
+    "http-proto",
+    "reqwest-blocking-client",
+] }
+opentelemetry-appender-tracing = { version = "0.32", default-features = false }
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "blocking",
+] }
+# Named directly only to install ring as the process-wide rustls provider.
+# `rustls-no-provider` does NOT fall back to the compiled-in provider -- reqwest
+# panics on client construction without an installed default, and
+# opentelemetry-otlp reaches that path through a `.join().unwrap()` it documents
+# as a TODO, so the panic lands on main. Caught locally; it would have crash
+# looped the deployed faucet. See `telemetry::install_crypto_provider`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Pragmatic lint baseline for a standalone binary: hard-forbid unsafe; rely on
 # `cargo clippy -- -D warnings` (default lints) in CI. The stricter pedantic/

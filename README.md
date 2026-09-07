@@ -34,15 +34,22 @@ as the `faucet` profile in its docker-compose stack.
 
 | Method & path | Body | Success |
 |---|---|---|
-| `POST /request` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest"}` — faucet mints and broadcasts |
-| `POST /sign` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "mode"}` — receiver broadcasts |
+| `POST /request` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest", "dest_account"}` — faucet mints and broadcasts |
+| `POST /sign` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "dest_account", "mode"}` — receiver broadcasts |
 | `GET /health`   | —    | `200 {"status": "ok"}` |
+
+`dest` accepts an EVM (H160) address as `0x` + 40 hex chars. It is funded
+through its pallet-revive mapped native account (`h160 ++ 0xEE*12`), which is
+what the Ethereum JSON-RPC sidecar reports as the address's balance. The
+resolved native account is returned as `dest_account` in every success
+response.
 
 `/sign` returns a `Balances.transfer_keep_alive` signed by a faucet **pool**
 account (not the funder), for the receiver to submit via `author_submitExtrinsic`.
-It is signed with an immortal era and is **single-use**: submit it promptly —
+It is signed with the runtime's mortal era and is **single-use**: submit it promptly —
 it is rejected as stale if that pool account is reused first; just call `/sign`
-again for a fresh one. Hybrid-chain responses are ~8 KB (ML-DSA-44 signature).
+again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
+(sr25519 + FN-DSA-512), so they are larger than vanilla sr25519 transactions.
 
 ### Status codes
 
@@ -103,7 +110,7 @@ nodes are assumed to be replicas of the same chain.
 
 ## Run locally
 
-Needs SSH access to the private `quip-protocol-rs` repo (`.cargo/config.toml`
+Needs SSH access to the private `quip-validator` repo (`.cargo/config.toml`
 uses the git CLI for auth).
 
 ```bash
@@ -142,6 +149,47 @@ Runtime environment variables (all optional):
   environments.
 - `QUIP_FAUCET_FAUCET_KEY` — same as `--faucet-key`.
 
+### Telemetry
+
+The faucet can ship its own log records to a
+[OneUptime](https://observe.quip.network) instance over OTLP/HTTP, in addition
+to writing them to stdout as before. The reason is the audit trail: every
+dispense is a use of the chain's sudo key, and on Flux the console those records
+live in is wiped on every update — not only when the app moves — and cannot be
+recovered afterwards.
+
+It is **off unless both the endpoint and the key are set**, so local runs, tests
+and CI ship nothing.
+
+- `TELEMETRY_ENDPOINT` — base URL, no signal path. The image bakes
+  `https://observe.quip.network/telemetry/otlp`. The exporter appends
+  `/v1/logs`.
+  ⚠ It must be `/telemetry/otlp` and not `/otlp`. Both are mounted and both
+  authenticate, so the wrong one works until a batch exceeds 1 MiB and nginx
+  returns a 413 that never reaches the application.
+- `ONEUPTIME_TELEMETRY_KEY` — a Telemetry Ingestion Key (UUID), sent as the
+  `x-oneuptime-token` header. Read from the environment only, never a CLI flag,
+  so it cannot land on a process's argv.
+- `TELEMETRY_SERVICE_NAME` — defaults to `quipfaucet`; also used as
+  `host.name`, deliberately constant so a relocation does not mint a new host.
+- `DISABLE_TELEMETRY=1` — kill switch, no rebuild needed. Parsed like
+  `QUIP_FAUCET_ALLOW_ANY_CHAIN`, so `0`/`false`/empty leave telemetry on.
+
+Only `https://` endpoints are accepted, apart from loopback for local testing;
+the key is a bearer credential and is not sent over plaintext. If the exporter
+cannot be built the faucet logs why and serves anyway — telemetry never stops it
+dispensing.
+
+To see what it actually puts on the wire, point it at the throwaway sink in
+`bootnodes.quip.network/deploy/flux/smoke/otlp-sink.py`:
+
+```bash
+TELEMETRY_ENDPOINT=http://127.0.0.1:4318 \
+TELEMETRY_SERVICE_NAME=quipfaucet-local \
+ONEUPTIME_TELEMETRY_KEY=11111111-2222-3333-4444-555555555555 \
+    ./target/debug/quip-faucet --node-url ws://127.0.0.1:9944 --faucet-key //Alice
+```
+
 For the full stack (validator + faucet behind Caddy), see
 [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 and run `docker compose --profile validator-cpu --profile faucet up -d`.
@@ -167,17 +215,24 @@ window, up to `--pool-max-size`. Tune the pool with `--pool-size`,
 Auto-detected from chain metadata at startup:
 
 - **sr25519** — vanilla `MultiSignature` chains.
-- **hybrid** — `HybridTxSignature` chains (sr25519 + ML-DSA-44, FIPS 204).
+- **hybrid** — H4 `HybridTxSignature` chains (sr25519 + FN-DSA-512).
 
 Either way the funder key is derived from its SURI (`//Alice`, a raw seed, or a
-mnemonic) via the shared `quip-transaction-crypto`/`quip-tools` crates, and the
-pool and base accounts are hard-derived from it — so the signed extrinsic
-envelope always matches the chain, with no hardcoded dev-seed table.
+mnemonic) via `quip-transaction-crypto`; the local R2-native transaction helper
+uses the runtime's exported signed-extension tuple. The pool and base accounts
+are hard-derived from the funder, so the signed extrinsic envelope always
+matches the chain, with no hardcoded dev-seed table.
+
+The H3-to-H4 migration preserves SURI and mnemonic formats, but the new suite
+derives different hybrid public keys and therefore different funder, base, and
+pool account IDs from the same secret. Run this faucet against an R2 chain whose
+`Sudo.Key` was initialized for H4; the startup sudo-key check fails fast if the
+configured key belongs to the old account domain.
 
 ## Build, test & CI
 
 Needs SSH access (local) or a CI job token to fetch the private
-`quip-protocol-rs` dependency. Unit tests mock the chain, so no node is required.
+`quip-validator` dependency. Unit tests mock the chain, so no node is required.
 
 ```bash
 cargo fmt --all -- --check

@@ -173,9 +173,8 @@ impl Pool {
 mod tests {
     use std::time::Duration;
 
-    use quip_tools::{pair_from_suri, signer_account};
-
     use super::{Pool, PoolAccount};
+    use crate::client::{pair_from_suri, signer_account};
 
     fn push(pool: &Pool, index: u32, free: u128) {
         let pair = pair_from_suri(&format!("//Alice//pool//{index}")).expect("derive");

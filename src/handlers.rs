@@ -4,13 +4,12 @@ use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, Json};
 use quip_protocol_runtime::AccountId;
-use quip_tools::format_hash;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sp_core::crypto::Ss58Codec;
 use tracing::{error, info};
 
-use crate::{calls, gate::GateDecision, AppState};
+use crate::{calls, client::format_hash, gate::GateDecision, AppState};
 
 type Reply = (StatusCode, Json<Value>);
 
@@ -32,16 +31,26 @@ fn err(status: StatusCode, msg: &str) -> Reply {
     reply(status, json!({ "error": msg }))
 }
 
-/// Parse a dest as SS58 or `0x`+64-hex into `(account, canonical_key)`.
+/// pallet-revive `AccountId32Mapper` fallback: an H160 EVM address is backed
+/// by the native account `h160 ++ 0xEE * 12`.
+fn evm_mapped_account(address: [u8; 20]) -> AccountId {
+    let mut bytes = [0xEEu8; 32];
+    bytes[..20].copy_from_slice(&address);
+    AccountId::from(bytes)
+}
+
+/// Parse a dest as SS58, `0x`+64-hex (native AccountId), or `0x`+40-hex (H160
+/// EVM address, mapped to its revive-backed native account) into
+/// `(account, canonical_key)`.
 fn parse_dest(dest: &str) -> Option<(AccountId, String)> {
     let account = match dest.strip_prefix("0x").or_else(|| dest.strip_prefix("0X")) {
         Some(body) => {
-            if body.len() != 64 {
-                return None;
-            }
             let bytes = hex::decode(body).ok()?;
-            let arr: [u8; 32] = bytes.try_into().ok()?;
-            AccountId::from(arr)
+            match bytes.len() {
+                32 => AccountId::from(<[u8; 32]>::try_from(bytes.as_slice()).ok()?),
+                20 => evm_mapped_account(<[u8; 20]>::try_from(bytes.as_slice()).ok()?),
+                _ => return None,
+            }
         }
         None => AccountId::from_ss58check(dest).ok()?,
     };
@@ -60,33 +69,82 @@ fn validate(req: &FundRequest, default_amount: u128) -> Result<(AccountId, Strin
     let (account, key) = parse_dest(&req.dest).ok_or_else(|| {
         err(
             StatusCode::BAD_REQUEST,
-            "invalid 'dest': not an SS58 or 0x-hex AccountId",
+            "invalid 'dest': not an SS58 address, 0x+64-hex AccountId, or 0x+40-hex EVM address",
         )
     })?;
     Ok((account, key, amount))
 }
 
-fn map_gate(decision: &GateDecision) -> Option<Reply> {
+fn throttled(retry_after: f64) -> Reply {
+    reply(
+        StatusCode::TOO_MANY_REQUESTS,
+        json!({ "error": "rate limited", "retry_after_seconds": retry_after }),
+    )
+}
+
+/// Turn a refusal into a reply, and record it.
+///
+/// Refusals are logged here rather than in `gate.rs` because this is the single
+/// funnel both routes pass through, and the only place that knows *which* route
+/// was refused. `RateLimited` and `Degraded` answer identically on the wire but
+/// are separated in the record: the second one means the balance query failed and
+/// the gate fell back to its strict window, which is a fact about the chain
+/// connection, not about the caller.
+fn map_gate(decision: &GateDecision, route: &str, dest_account: &str) -> Option<Reply> {
     match decision {
         GateDecision::Allow => None,
-        GateDecision::RateLimited { retry_after } | GateDecision::Degraded { retry_after } => {
+        GateDecision::RateLimited { retry_after } => {
+            info!(
+                route,
+                dest_account,
+                retry_after_seconds = retry_after,
+                outcome = "rate_limited",
+                "faucet refused"
+            );
+            Some(throttled(*retry_after))
+        }
+        GateDecision::Degraded { retry_after } => {
+            info!(
+                route,
+                dest_account,
+                retry_after_seconds = retry_after,
+                outcome = "degraded",
+                "faucet refused"
+            );
+            Some(throttled(*retry_after))
+        }
+        GateDecision::InFlight => {
+            info!(route, dest_account, outcome = "in_flight", "faucet refused");
             Some(reply(
                 StatusCode::TOO_MANY_REQUESTS,
-                json!({ "error": "rate limited", "retry_after_seconds": retry_after }),
+                json!({ "error": "request already in flight for this dest" }),
             ))
         }
-        GateDecision::InFlight => Some(reply(
-            StatusCode::TOO_MANY_REQUESTS,
-            json!({ "error": "request already in flight for this dest" }),
-        )),
-        GateDecision::Funded { free } => Some(reply(
-            StatusCode::FORBIDDEN,
-            json!({ "error": "destination already funded", "free_balance_plancks": free }),
-        )),
-        GateDecision::Unavailable => Some(reply(
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({ "error": "balance check unavailable" }),
-        )),
+        GateDecision::Funded { free } => {
+            info!(
+                route,
+                dest_account,
+                free_balance_plancks = %free,
+                outcome = "already_funded",
+                "faucet refused"
+            );
+            Some(reply(
+                StatusCode::FORBIDDEN,
+                json!({ "error": "destination already funded", "free_balance_plancks": free }),
+            ))
+        }
+        GateDecision::Unavailable => {
+            info!(
+                route,
+                dest_account,
+                outcome = "balance_check_unavailable",
+                "faucet refused"
+            );
+            Some(reply(
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({ "error": "balance check unavailable" }),
+            ))
+        }
     }
 }
 
@@ -97,7 +155,7 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     };
 
     let decision = state.gate.check(&key, &account, &state.chain).await;
-    if let Some(resp) = map_gate(&decision) {
+    if let Some(resp) = map_gate(&decision, "/request", &key) {
         return resp;
     }
 
@@ -120,14 +178,35 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     match result {
         Ok(hash) => {
             state.gate.commit(&key);
-            info!("funded {key} amount={amount}");
+            let extrinsic_hash = format_hash(&hash);
+            // The audit record. `amount` is u128 and `tracing` has no native
+            // value for it, so it goes over as an exact decimal string rather
+            // than being narrowed. The extrinsic hash was previously returned to
+            // the caller and never logged, which left the record unable to name
+            // the transaction it describes.
+            info!(
+                route = "/request",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                extrinsic_hash = %extrinsic_hash,
+                outcome = "dispensed",
+                "faucet dispensed"
+            );
             reply(
                 StatusCode::OK,
-                json!({ "extrinsic_hash": format_hash(&hash), "amount": amount, "dest": req.dest }),
+                json!({ "extrinsic_hash": extrinsic_hash, "amount": amount, "dest": req.dest, "dest_account": key }),
             )
         }
         Err(submit_err) => {
-            error!("/request submit failed: {submit_err:#}");
+            error!(
+                route = "/request",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                outcome = "submit_failed",
+                "/request submit failed: {submit_err:#}"
+            );
             err(StatusCode::BAD_GATEWAY, "transfer failed; see faucet logs")
         }
     }
@@ -140,7 +219,7 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
     };
 
     let decision = state.gate.check(&key, &account, &state.chain).await;
-    if let Some(resp) = map_gate(&decision) {
+    if let Some(resp) = map_gate(&decision, "/sign", &key) {
         return resp;
     }
 
@@ -178,15 +257,31 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
             // Optimistic: a handed-out tx is equivalent to funding.
             state.gate.commit(&key);
             state.pool.complete(allocated.index, amount, nonce);
+            let extrinsic_hash = format_hash(&hash);
+            // `/sign` hand-outs were entirely invisible before this. The signed
+            // extrinsic itself is deliberately NOT logged: it is a replayable
+            // artifact, and the hash identifies it just as well.
+            info!(
+                route = "/sign",
+                dest = %req.dest,
+                dest_account = %key,
+                amount_plancks = %amount,
+                extrinsic_hash = %extrinsic_hash,
+                from = %allocated.account.to_ss58check(),
+                nonce,
+                outcome = "signed",
+                "faucet signed"
+            );
             reply(
                 StatusCode::OK,
                 json!({
                     "signed_extrinsic": signed_extrinsic,
-                    "extrinsic_hash": format_hash(&hash),
+                    "extrinsic_hash": extrinsic_hash,
                     "nonce": nonce,
                     "from": allocated.account.to_ss58check(),
                     "amount": amount,
                     "dest": req.dest,
+                    "dest_account": key,
                     "mode": "hybrid",
                 }),
             )
@@ -195,5 +290,60 @@ pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundReques
             state.pool.release(allocated.index);
             err(StatusCode::BAD_GATEWAY, "sign failed; see faucet logs")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dest_accepts_ss58() {
+        let account = AccountId::from([7u8; 32]);
+        let ss58 = account.to_ss58check();
+        let (parsed, key) = parse_dest(&ss58).expect("SS58 dest should parse");
+        assert_eq!(parsed, account);
+        assert_eq!(key, format!("0x{}", hex::encode([7u8; 32])));
+    }
+
+    #[test]
+    fn parse_dest_accepts_native_hex() {
+        let dest = format!("0x{}", hex::encode([3u8; 32]));
+        let (parsed, key) = parse_dest(&dest).expect("64-hex dest should parse");
+        assert_eq!(parsed, AccountId::from([3u8; 32]));
+        assert_eq!(key, dest);
+    }
+
+    #[test]
+    fn parse_dest_maps_evm_address_to_revive_account() {
+        // 0x7a718C...4CF9 ++ 0xEE * 12 — the pallet-revive fallback account.
+        let (parsed, key) = parse_dest("0x7a718C27469499AaE7c652C0D1A95BD14eCa4CF9")
+            .expect("40-hex EVM dest should parse");
+        let expected = "7a718c27469499aae7c652c0d1a95bd14eca4cf9eeeeeeeeeeeeeeeeeeeeeeee";
+        assert_eq!(
+            key,
+            format!("0x{expected}"),
+            "H160 must map to h160 ++ 0xEE*12"
+        );
+        assert_eq!(
+            AsRef::<[u8]>::as_ref(&parsed),
+            hex::decode(expected).unwrap().as_slice()
+        );
+    }
+
+    #[test]
+    fn parse_dest_evm_hex_is_case_insensitive() {
+        let lower = parse_dest("0x7a718c27469499aae7c652c0d1a95bd14eca4cf9");
+        let checksummed = parse_dest("0x7a718C27469499AaE7c652C0D1A95BD14eCa4CF9");
+        assert_eq!(lower.map(|(_, key)| key), checksummed.map(|(_, key)| key));
+    }
+
+    #[test]
+    fn parse_dest_rejects_bad_lengths_and_input() {
+        assert!(parse_dest("0xabcd").is_none());
+        assert!(parse_dest(&format!("0x{}", "ab".repeat(21))).is_none());
+        assert!(parse_dest("0xnot-hex-at-all").is_none());
+        assert!(parse_dest("").is_none());
+        assert!(parse_dest("not-an-address").is_none());
     }
 }
