@@ -28,8 +28,10 @@
 # full fleet topology notes.
 #
 # arm64 prerequisite: build-binary-arm64 pulls $TOOLCHAIN_IMAGE on the arm64
-# runner, so the toolchain image must be published for linux/arm64 as well —
-# see the buildx command in quip-protocol-rs/.gitlab/ci-toolchain.Dockerfile.
+# runner, so the toolchain image must be published for linux/arm64 as well.
+# quip-validator builds each architecture on a native runner and combines them
+# into a manifest list, so the single :latest tag serves both — see the
+# ci-image-toolchain* jobs in quip-validator/.gitlab-ci.yml.
 
 stages:
   - test
@@ -41,8 +43,17 @@ variables:
   # → registry.gitlab.com/quip.network/faucet
   IMAGE: ${CI_REGISTRY_IMAGE}
   # Substrate toolchain image (rust 1.95.0 + clang/protoc/cmake + wasm32v1-none),
-  # shared with quip-protocol-rs. Pinned rustc — see rust-toolchain.toml.
-  TOOLCHAIN_IMAGE: docker.io/carback1/rust-substrate-builder:latest
+  # shared with quip-validator, which builds and publishes it. Pinned rustc —
+  # see rust-toolchain.toml.
+  #
+  # This moved off a personal Docker Hub namespace when quip-validator started
+  # building its CI images in CI (quip-validator!82). Nothing pushes to
+  # docker.io/carback1/rust-substrate-builder any more, so the old value would
+  # have frozen this repo on a toolchain that drifts from the one quip-validator
+  # builds and tests against. The runner authenticates to registry.gitlab.com
+  # with CI_JOB_TOKEN automatically; quip-validator allowlists this project
+  # under Settings → CI/CD → Job token permissions.
+  TOOLCHAIN_IMAGE: registry.gitlab.com/quip.network/quip-validator/ci-toolchain:latest
   CARGO_HOME: $CI_PROJECT_DIR/.cargo
   CARGO_TERM_COLOR: always
 
