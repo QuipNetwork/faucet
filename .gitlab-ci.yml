@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # GitLab CI/CD for the Quip faucet.
 # Publishes a multi-arch (linux/amd64 + linux/arm64) image to
-# ${CI_REGISTRY_IMAGE} on main and on tags, the same way quip-protocol-rs
+# ${CI_REGISTRY_IMAGE} on main and on tags, the same way quip-validator
 # publishes quip-network-node: one image per architecture built on a native
 # runner, stitched into a manifest list so a single tag serves both.
 #
@@ -24,7 +24,7 @@
 # Runner fleet: the `docker` tag is load-bearing — it pins jobs to *container*
 # (Docker) executors that honour `image:`. The fleet also has macOS shell
 # runners carrying the bare arch tags (amd64/arm64) that ignore `image:` and
-# run on the SIP-protected host. See quip-protocol-rs's .gitlab-ci.yml for the
+# run on the SIP-protected host. See quip-validator's .gitlab-ci.yml for the
 # full fleet topology notes.
 #
 # arm64 prerequisite: build-binary-arm64 pulls $TOOLCHAIN_IMAGE on the arm64
