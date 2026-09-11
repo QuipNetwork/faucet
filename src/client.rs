@@ -1,7 +1,7 @@
 //! R2-native transaction construction and JSON-RPC helpers.
 //!
 //! These helpers deliberately live in the faucet: the old `quip-tools` package
-//! is tied to the H3 `quip-protocol-rs` runtime and is not part of R2. Building
+//! is tied to the H3 `quip-validator` runtime and is not part of R2. Building
 //! directly with R2's runtime types keeps the signed-extension order and H4
 //! signature envelope identical to the node.
 
