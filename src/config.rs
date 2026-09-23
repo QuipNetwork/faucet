@@ -27,9 +27,16 @@ pub struct Config {
     #[arg(long, default_value_t = 8087)]
     pub port: u16,
 
-    /// Default funding amount in plancks (overridable per request).
+    /// Default funding amount in plancks (overridable per request, up to
+    /// `--max-amount-plancks`).
     #[arg(long, default_value_t = DEFAULT_AMOUNT_PLANCKS)]
     pub amount: u128,
+
+    /// Largest `amount` a single request may ask for, in plancks. Defaults to
+    /// `--amount` (one dispense), so an accidental large request gets a 400
+    /// instead of a payout.
+    #[arg(long = "max-amount-plancks")]
+    pub max_amount: Option<u128>,
 
     /// Deny when the destination's free balance exceeds this. Defaults to one
     /// dispense: an account already holding a full hand-out doesn't need more,
@@ -123,6 +130,10 @@ impl Config {
     pub fn idle_grow(&self) -> Duration {
         Duration::from_secs_f64(self.pool_idle_grow_seconds)
     }
+    /// Per-request `amount` ceiling: `--max-amount-plancks`, else one dispense.
+    pub fn max_amount(&self) -> u128 {
+        self.max_amount.unwrap_or(self.amount)
+    }
     pub fn balance_query_fail_open(&self) -> bool {
         !self.balance_query_fail_closed
     }
@@ -161,6 +172,16 @@ mod tests {
         let mut argv = vec!["quip-faucet", "--node-url", "ws://localhost:9944"];
         argv.extend(extra);
         Config::try_parse_from(argv).expect("config parses")
+    }
+
+    #[test]
+    fn max_amount_defaults_to_one_dispense() {
+        assert_eq!(parse(&[]).max_amount(), super::DEFAULT_AMOUNT_PLANCKS);
+        assert_eq!(parse(&["--amount", "5"]).max_amount(), 5);
+        assert_eq!(
+            parse(&["--amount", "5", "--max-amount-plancks", "50"]).max_amount(),
+            50
+        );
     }
 
     /// Env mutation is process-global, so every QUIP_FAUCET_ALLOW_ANY_CHAIN
