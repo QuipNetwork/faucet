@@ -38,6 +38,11 @@ as the `faucet` profile in its docker-compose stack.
 | `POST /sign` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "dest_account", "mode"}` — receiver broadcasts |
 | `GET /health`   | —    | `200 {"status": "ok"}` |
 
+`amount` is optional and defaults to `--amount` (one dispense). A request may
+ask for at most `--max-amount-plancks`, which also defaults to one dispense;
+anything larger gets a `400` naming the maximum. Raise the flag to allow
+bigger one-off requests.
+
 `dest` accepts an EVM (H160) address as `0x` + 40 hex chars. It is funded
 through its pallet-revive mapped native account (`h160 ++ 0xEE*12`), which is
 what the Ethereum JSON-RPC sidecar reports as the address's balance. The
@@ -55,7 +60,7 @@ again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
 
 | Code | Meaning |
 |---|---|
-| `400` | Invalid JSON / `dest` / `amount`. |
+| `400` | Invalid JSON / `dest` / `amount`, including an `amount` above `--max-amount-plancks` (default: `--amount`, one dispense). |
 | `403` | Destination already funded — free balance exceeds `--max-funded-balance-plancks` (default: one dispense; set 0 to deny any funds). Body includes `free_balance_plancks`. |
 | `429` | Rate limited (`retry_after_seconds`). Confirmed-empty accounts use the short `--lenient-rate-limit-seconds`; if the balance query can't run, the strict `--rate-limit-seconds` applies. |
 | `503` | `/sign` pool temporarily exhausted (`retry_after_seconds`), or balance check unavailable when `--balance-query-fail-closed`. |
