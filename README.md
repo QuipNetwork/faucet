@@ -27,13 +27,8 @@ configured with `--allow-any-chain` for a controlled testnet.
 
 | Method & path | Body | Success |
 |---|---|---|
-<<<<<<< HEAD
-| `POST /request` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest", "dest_account"}` — faucet mints and broadcasts |
+| `POST /request` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"extrinsic_hash", "amount", "dest", "dest_account"}` — base wallet transfers and broadcasts |
 | `POST /sign` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "dest_account", "mode"}` — receiver broadcasts |
-=======
-| `POST /request` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"extrinsic_hash", "amount", "dest"}` — base wallet transfers and broadcasts |
-| `POST /sign` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "mode"}` — receiver broadcasts |
->>>>>>> fba560e (feat(faucet): mint directly with governed runtime 119 authority)
 | `GET /health`   | —    | `200 {"status": "ok"}` |
 
 `amount` is optional and defaults to `--amount` (one dispense). A request may
