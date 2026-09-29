@@ -230,9 +230,8 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
 /// Fail fast if the funder is not the chain's sudo key. Every dispense flows
 /// through `Sudo::sudo(FaucetOps::mint)` (to top up the base wallet, which then
 /// transfers to users), and the runtime authorizes that only for `Sudo::Key`. A
-/// wrong key makes the node accept each extrinsic into its pool and then drop it,
-/// so `/request` returns `200` yet nothing ever lands — the silent failure this
-/// guards against. Crashing at startup makes the misconfiguration loud instead.
+/// wrong key cannot authorize the sudo call. Reject it at startup rather than
+/// repeatedly submitting top-ups that fail dispatch.
 async fn ensure_funder_is_sudo(chain: &ChainClient, funder: &Funder) -> Result<()> {
     match chain.sudo_key().await.context("reading chain Sudo.Key")? {
         Some(key) if key == funder.account => {
@@ -241,7 +240,7 @@ async fn ensure_funder_is_sudo(chain: &ChainClient, funder: &Funder) -> Result<(
         }
         Some(key) => bail!(
             "funder {} is NOT the chain sudo key (Sudo.Key = {}); every mint would be \
-             accepted into the tx pool then dropped. Set --faucet-key / \
+             rejected by sudo. Set --faucet-key / \
              QUIP_FAUCET_FAUCET_KEY to the sudo account.",
             funder.account.to_ss58check(),
             key.to_ss58check(),
@@ -281,8 +280,7 @@ async fn ensure_base_funded(
             return Ok(());
         }
     }
-    warn!("base top-up not confirmed in 30s");
-    Ok(())
+    anyhow::bail!("base top-up finalized but balance remained below threshold for 30s")
 }
 
 fn spawn_base_monitor(state: Arc<AppState>) {

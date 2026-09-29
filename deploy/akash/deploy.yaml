@@ -74,7 +74,14 @@ services:
     env:
       # op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid
       # account from it; op-1 is the chain sudo key, so base-wallet top-ups via
-      # Sudo.sudo(FaucetOps.mint) succeed. Verify after deploy: the startup log
+      # Sudo.sudo(FaucetOps.mint) succeed on the pre-119 runtime. Runtime 119
+      # rejects Root minting: do not roll this service onto 119 until direct
+      # signed minting and authority/fuse/budget checks are implemented. Top-ups
+      # require finalized System success AND Sudid.sudo_result success.
+      # Phase 2 retains direct signed minting by Authority, appointed/revoked
+      # through Foundation set_authority. Recheck Authority and stop on revocation;
+      # rotation does not reset the fuse/budget. This sudo deployment needs updating.
+      # Verify after deploy: the startup log
       # prints `funder: <ss58>` — confirm it equals op-1's known sudo address.
       - QUIP_FAUCET_FAUCET_KEY=<operator-1-mnemonic>
       - RUST_LOG=info

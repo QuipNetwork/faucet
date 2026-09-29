@@ -214,3 +214,32 @@ manifest list — matching the quip-network-node image.
 ## License
 
 AGPL-3.0-or-later. See `LICENSE`.
+
+## Top-up receipts and runtime 119 rollout
+
+Funder top-ups now wait up to 120 seconds for a finalized receipt and require
+both `System.ExtrinsicSuccess` and `Sudo.Sudid { sudo_result: Ok }` for the exact
+submitted extrinsic. Inner dispatch errors, missing/undecodable events, and
+confirmation timeouts fail the top-up; pool acceptance is not success. An
+ambiguous confirmation is not automatically resubmitted by that call.
+
+This fixes failure reporting for the current sudo-based deployment. It does not
+make this service compatible with the Phase 1 runtime 119 faucet authority:
+that runtime rejects Root for minting. Before deploying against 119, repin the
+runtime dependency and update the call builder to direct signed minting,
+startup authority/fuse/budget checks, and the Akash deployment configuration.
+The pinned runtime event decoder fails closed on incompatible event schemas.
+
+Startup, each context refresh, and each transaction submission check on-chain
+`specVersion` and `transactionVersion` against the compiled runtime. A mismatch
+returns a clear rebuild error before submission. This also prevents a failed
+background refresh from allowing submissions with an outdated cached context.
+An upgrade racing submission still fails closed during receipt decoding.
+
+Phase 2 (`ru/spike/validator-onboarding`) retains direct signed minting by the
+stored operational authority. Foundation governance appoints/revokes that key
+with `faucetOps.set_authority(Some(account))` / `None`, and can also mint directly.
+Routine top-ups do not need a vote. The service integration must check current
+Authority, Enabled fuse, budget and runtime version, and stop on revocation;
+changing authority never resets the fuse or budget. The existing sudo-based
+call builder still needs replacement before deployment against this runtime.

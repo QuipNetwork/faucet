@@ -13,8 +13,8 @@ use std::{
 };
 
 use crate::client::{
-    build_signed_extrinsic, encode_extrinsic, fetch_chain_context, submit_extrinsic, ws_client,
-    ChainContext,
+    build_signed_extrinsic, encode_extrinsic, fetch_chain_context, submit_extrinsic,
+    submit_sudo_extrinsic, ws_client, ChainContext,
 };
 use anyhow::{bail, Context, Result};
 use codec::{Decode, Encode};
@@ -114,8 +114,8 @@ impl ChainClient {
     /// Submit a sudo/funder extrinsic, fetching the funder nonce fresh each try and
     /// retrying on a stale-nonce rejection. The funder (chain sudo key) may be a
     /// shared, active account, so a cached/lane nonce goes stale — fetch-fresh +
-    /// retry is the correct model. Fire-and-forget (`author_submitExtrinsic`);
-    /// not failed over (resubmitting a possibly-landed tx could double-fund).
+    /// retry is the correct model. Waits for finalization and checks Sudid's
+    /// inner result; not failed over or resubmitted on ambiguous confirmation.
     pub async fn submit_funder(
         &self,
         signer: &HybridPair,
@@ -130,7 +130,7 @@ impl ChainClient {
             let extrinsic = build_signed_extrinsic(signer, call.clone(), ctx);
             let bytes = encode_extrinsic(&extrinsic);
             let client = self.client();
-            match submit_extrinsic(&client, &bytes).await {
+            match submit_sudo_extrinsic(&client, &bytes).await {
                 Ok(hash) => return Ok(hash),
                 Err(err) => {
                     let msg = format!("{err:#}");
