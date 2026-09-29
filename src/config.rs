@@ -18,7 +18,7 @@ pub struct Config {
     #[arg(long = "node-url", required = true)]
     pub node_urls: Vec<String>,
 
-    /// Funder SURI (the chain sudo key). Pool accounts derive from it.
+    /// Funder SURI (the Foundation-appointed FaucetOps.Authority). Pool accounts derive from it.
     #[arg(long, default_value = "//Alice", env = "QUIP_FAUCET_FAUCET_KEY")]
     pub faucet_key: String,
 
@@ -71,7 +71,7 @@ pub struct Config {
     #[arg(long, default_value_t = 30.0)]
     pub pool_idle_grow_seconds: f64,
 
-    /// Top up the base wallet (via sudo) when its balance drops below this many
+    /// Top up the base wallet (via direct signed mint) when its balance drops below this many
     /// dispenses of runway (`base_balance < base_min_txns * amount`).
     #[arg(long, default_value_t = 1000)]
     pub base_min_txns: u64,

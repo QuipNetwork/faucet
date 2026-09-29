@@ -2,13 +2,14 @@
 //!
 //! tokio + jsonrpsee (multiplexed RPC, no global lock), reusing the Quip
 //! runtime/crypto/client crates so the wire format never drifts. A dedicated base
-//! wallet (sudo-topped-up) funds /request and the pool via a nonce lane, so only
-//! rare top-ups touch the shared, contended sudo key.
+//! wallet (authority-topped-up) funds /request and the pool via a nonce lane, so only
+//! rare top-ups touch the shared, contended authority key.
 
 mod calls;
 mod chain;
 mod client;
 mod config;
+mod faucet_state;
 mod gate;
 mod handlers;
 mod nonce;
@@ -17,7 +18,7 @@ mod signer;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use axum::{
     routing::{get, post},
     Router,
@@ -42,8 +43,8 @@ use crate::{
 /// runtime version; pool accounts must stay above it for `transfer_keep_alive`.
 const EXISTENTIAL_DEPOSIT_PLANCKS: u128 = 1_000_000_000;
 
-/// Dedicated hot wallet that funds users; sudo-topped-up, with a faucet-only nonce
-/// lane so `/request` and pool funding pipeline without touching the sudo key.
+/// Dedicated hot wallet that funds users; authority-topped-up, with a faucet-only nonce
+/// lane so `/request` and pool funding pipeline without touching the authority key.
 pub struct BaseWallet {
     pub pair: HybridPair,
     pub account: AccountId,
@@ -84,9 +85,9 @@ async fn main() -> Result<()> {
     .await?;
 
     // Verify the funder can actually mint before we touch anything on chain.
-    ensure_funder_is_sudo(&chain, &funder).await?;
+    chain.ensure_faucet_ready().await?;
 
-    // Dedicated base wallet: sudo-topped-up, funds /request + pool via a nonce lane.
+    // Dedicated base wallet: authority-topped-up, funds /request + pool via a nonce lane.
     let (base_pair, base_account) = funder.derive_base()?;
     info!("base wallet: {}", base_account.to_ss58check());
     ensure_base_funded(&chain, &funder, &base_account, &cfg).await?;
@@ -227,34 +228,9 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
     Ok(())
 }
 
-/// Fail fast if the funder is not the chain's sudo key. Every dispense flows
-/// through `Sudo::sudo(FaucetOps::mint)` (to top up the base wallet, which then
-/// transfers to users), and the runtime authorizes that only for `Sudo::Key`. A
-/// wrong key cannot authorize the sudo call. Reject it at startup rather than
-/// repeatedly submitting top-ups that fail dispatch.
-async fn ensure_funder_is_sudo(chain: &ChainClient, funder: &Funder) -> Result<()> {
-    match chain.sudo_key().await.context("reading chain Sudo.Key")? {
-        Some(key) if key == funder.account => {
-            info!("funder confirmed as chain sudo key");
-            Ok(())
-        }
-        Some(key) => bail!(
-            "funder {} is NOT the chain sudo key (Sudo.Key = {}); every mint would be \
-             rejected by sudo. Set --faucet-key / \
-             QUIP_FAUCET_FAUCET_KEY to the sudo account.",
-            funder.account.to_ss58check(),
-            key.to_ss58check(),
-        ),
-        None => bail!(
-            "chain reports no Sudo.Key; this faucet mints via Sudo::sudo and cannot operate \
-             against it. Verify the --node-url target."
-        ),
-    }
-}
-
 /// Ensure the base wallet has runway: if its balance is below the top-up threshold
-/// (cold start or drained), sudo-mint up to the target. Reused at startup and by
-/// the background monitor — the only place the contended sudo key is used.
+/// (cold start or drained), authority-mint up to the target. Reused at startup and by
+/// the background monitor — the only place the contended authority key is used.
 async fn ensure_base_funded(
     chain: &ChainClient,
     funder: &Funder,
@@ -268,10 +244,9 @@ async fn ensure_base_funded(
     }
     let target = cfg.base_topup_target();
     let topup = target.saturating_sub(balance);
-    info!("base wallet low ({balance} < {threshold}); sudo-minting {topup} to reach {target}");
-    let call = calls::sudo_mint(base_account.clone(), topup);
+    info!("base wallet low ({balance} < {threshold}); authority-minting {topup} to reach {target}");
     chain
-        .submit_funder(&funder.pair, &funder.account, call)
+        .submit_funder(&funder.pair, &funder.account, base_account.clone(), topup)
         .await
         .context("topping up base wallet")?;
     for _ in 0..30 {

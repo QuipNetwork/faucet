@@ -19,8 +19,15 @@ pub struct FundRequest {
     pub amount: Option<u128>,
 }
 
-pub async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+pub async fn health(State(state): State<Arc<AppState>>) -> Reply {
+    if state.chain.is_ready() {
+        reply(StatusCode::OK, json!({ "status": "ok" }))
+    } else {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet authority, fuse, budget or runtime checks unavailable",
+        )
+    }
 }
 
 fn reply(status: StatusCode, body: Value) -> Reply {
@@ -110,6 +117,12 @@ fn map_gate(decision: &GateDecision) -> Option<Reply> {
 }
 
 pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundRequest>) -> Reply {
+    if !state.chain.is_ready() {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet unavailable; see operator logs",
+        );
+    }
     let (account, key, amount) = match validate(&req, state.cfg.amount, state.cfg.max_amount()) {
         Ok(parsed) => parsed,
         Err(resp) => return resp,
@@ -121,7 +134,7 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     }
 
     // Allowed + reserved. Transfer from the base wallet (its nonce lane lets these
-    // pipeline concurrently; sudo is only used to top the base wallet up).
+    // pipeline concurrently; the authority is only used to top the base wallet up).
     let call = calls::transfer_keep_alive(account, amount);
     let result = state
         .chain
@@ -153,6 +166,12 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
 }
 
 pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundRequest>) -> Reply {
+    if !state.chain.is_ready() {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet unavailable; see operator logs",
+        );
+    }
     let (account, key, amount) = match validate(&req, state.cfg.amount, state.cfg.max_amount()) {
         Ok(parsed) => parsed,
         Err(resp) => return resp,

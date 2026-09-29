@@ -1,8 +1,8 @@
 //! Sequential nonce allocator for the dedicated **base wallet**.
 //!
-//! The base wallet is funded by sudo and is the only account the faucet submits
+//! The base wallet is funded by the appointed authority and is the only account the faucet submits
 //! transfers from, so its nonce is not contended — a local fetch-and-add lets
-//! `/request` transfers (and pool funding) pipeline concurrently. (The chain sudo
+//! `/request` transfers (and pool funding) pipeline concurrently. (The authority
 //! key is *not* dedicated, so its submissions fetch the nonce fresh instead; see
 //! `ChainClient::submit_funder`.)
 

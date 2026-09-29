@@ -4,8 +4,8 @@
 # Akash SDL v2.0 for faucet.testnet.quip.network (Phase B redeploy).
 #
 # Two services in one deployment:
-#   - faucet: upstream Rust quip-faucet. Funder is op-1's hybrid account
-#     (the chain sudo key); on boot it sudo-mints a dedicated base wallet,
+#   - faucet: upstream Rust quip-faucet. Funder is the Foundation-appointed authority
+#     account; on boot it directly mints into a dedicated base wallet,
 #     funds a pool, and serves /request, /sign, /health. No internal
 #     quipnode — RPC goes to the public bootnode endpoints over WSS, with
 #     ordered failover.
@@ -17,12 +17,9 @@
 #     issue-on-boot design).
 #
 # Secrets to fill before submitting (search for `<...>`):
-#   <operator-1-mnemonic>            op-1's BIP-39 phrase (Proton Pass). The
-#                                    Rust faucet derives op-1's hybrid account
-#                                    from it natively — no seed-derivation step.
-#                                    op-1 is the chain sudo key, so the faucet
-#                                    can sudo-mint its base wallet. A 0x + 64-hex
-#                                    seed works in this field too.
+#   <faucet-authority-suri>          dedicated funded H4 account appointed by
+#                                    Foundation faucetOps.set_authority.
+#                                    Use its mnemonic/SURI, not an operator sudo key.
 #   <certifier-token-faucet>         from certifier.quip.network admin for
 #                                    faucet.testnet.quip.network (the old
 #                                    token from the v1 deploy is still valid
@@ -49,10 +46,8 @@ endpoints:
 
 services:
   faucet:
-    # :latest is the Rust faucet binary published by CI. It derives op-1's real
-    # hybrid account natively from the mnemonic (HybridPair::from_string), so
-    # there is no patched image and no master-seed derivation step.
-    # Pin :sha-<short> instead of :latest for a reproducible deploy.
+    # Pin the CI image built against the approved runtime-119 revision.
+    # The key derives its H4 account natively via HybridPair::from_string.
     image: registry.gitlab.com/quip.network/faucet:latest
     args:
       # Ordered failover RPC endpoints: the faucet connects to the first
@@ -72,18 +67,12 @@ services:
       # testnet is the explicit target.
       - --allow-any-chain
     env:
-      # op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid
-      # account from it; op-1 is the chain sudo key, so base-wallet top-ups via
-      # Sudo.sudo(FaucetOps.mint) succeed on the pre-119 runtime. Runtime 119
-      # rejects Root minting: do not roll this service onto 119 until direct
-      # signed minting and authority/fuse/budget checks are implemented. Top-ups
-      # require finalized System success AND Sudid.sudo_result success.
-      # Phase 2 retains direct signed minting by Authority, appointed/revoked
-      # through Foundation set_authority. Recheck Authority and stop on revocation;
-      # rotation does not reset the fuse/budget. This sudo deployment needs updating.
-      # Verify after deploy: the startup log
-      # prints `funder: <ss58>` — confirm it equals op-1's known sudo address.
-      - QUIP_FAUCET_FAUCET_KEY=<operator-1-mnemonic>
+      # Foundation must appoint this funded account as FaucetOps.Authority.
+      # Startup/refresh verify Authority, Enabled fuse, budget and runtime version.
+      # Rotate via set_authority(Some(new_account)), update this secret and restart.
+      # Revoke via set_authority(None); rotation never resets fuse or budget.
+      # Top-ups require finalized System success and both matching mint events.
+      - QUIP_FAUCET_FAUCET_KEY=<faucet-authority-suri>
       - RUST_LOG=info
     expose:
       - port: 8087

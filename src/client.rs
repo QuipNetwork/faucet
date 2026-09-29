@@ -151,7 +151,7 @@ pub async fn ensure_runtime_compatible(client: &WsClient) -> Result<(u32, u32)> 
     check_runtime_version(&version)
 }
 
-fn check_runtime_version(version: &Value) -> Result<(u32, u32)> {
+pub(crate) fn check_runtime_version(version: &Value) -> Result<(u32, u32)> {
     let read = |field: &str| -> Result<u32> {
         let value = version
             .get(field)
@@ -221,14 +221,105 @@ mod tests {
     }
 }
 
-/// Confirm a sudo call at a finalized block and inspect its inner result.
-/// Pool acceptance and System::ExtrinsicSuccess alone do not prove sudo success.
-pub async fn submit_sudo_extrinsic(client: &WsClient, bytes: &[u8]) -> Result<Hash> {
+/// Distinguish authoritative rejection from a possibly accepted transaction.
+#[derive(Debug)]
+pub enum MintSubmitError {
+    Rejected {
+        error: anyhow::Error,
+        retryable_nonce: bool,
+    },
+    Ambiguous(anyhow::Error),
+}
+impl std::fmt::Display for MintSubmitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rejected { error, .. } => write!(f, "mint rejected: {error:#}"),
+            Self::Ambiguous(error) => write!(
+                f,
+                "mint outcome unknown; reconcile before restart: {error:#}"
+            ),
+        }
+    }
+}
+impl std::error::Error for MintSubmitError {}
+impl MintSubmitError {
+    fn rejected(error: anyhow::Error) -> Self {
+        Self::Rejected {
+            error,
+            retryable_nonce: false,
+        }
+    }
+    pub fn is_ambiguous(&self) -> bool {
+        matches!(self, Self::Ambiguous(_))
+    }
+    pub fn is_stale_nonce(&self) -> bool {
+        matches!(
+            self,
+            Self::Rejected {
+                retryable_nonce: true,
+                ..
+            }
+        )
+    }
+}
+
+fn submission_error(error: jsonrpsee::core::client::Error) -> MintSubmitError {
+    if let jsonrpsee::core::client::Error::Call(ref rpc) = error {
+        // SDK author error codes: definite pool/method rejections only.
+        // AlreadyImported (1013), generic server errors and transport failures
+        // can refer to an accepted transaction and must remain ambiguous.
+        if matches!(rpc.code(), 1001 | 1002 | 1010..=1012 | 1014..=1016 | 1018..=1021 | -32602..=-32600)
+        {
+            let message = rpc.to_string().to_ascii_lowercase();
+            let retryable_nonce = rpc.code() == 1014
+                || (rpc.code() == 1010
+                    && (message.contains("outdated") || message.contains("stale")));
+            return MintSubmitError::Rejected {
+                error: error.into(),
+                retryable_nonce,
+            };
+        }
+    }
+    MintSubmitError::Ambiguous(error.into())
+}
+
+fn terminal_mint_status(status: &Value, inclusion_seen: &mut bool) -> Option<MintSubmitError> {
+    let matches = |name| status.as_str() == Some(name) || status.get(name).is_some();
+    *inclusion_seen |= matches("inBlock") || matches("retracted");
+    if matches("invalid") && *inclusion_seen {
+        Some(MintSubmitError::Ambiguous(anyhow!(
+            "invalid after inclusion/retraction; canonical outcome must be reconciled"
+        )))
+    } else if matches("invalid") {
+        Some(MintSubmitError::rejected(anyhow!(
+            "invalid mint transaction"
+        )))
+    } else if ["dropped", "usurped", "finalityTimeout"]
+        .into_iter()
+        .any(matches)
+    {
+        Some(MintSubmitError::Ambiguous(anyhow!(
+            "mint did not finalize: {status}"
+        )))
+    } else {
+        None
+    }
+}
+
+/// Require a finalized receipt with System success and both mint events.
+pub async fn submit_mint_extrinsic(
+    client: &WsClient,
+    bytes: &[u8],
+    who: &runtime::AccountId,
+    amount: u128,
+) -> std::result::Result<Hash, MintSubmitError> {
     use jsonrpsee::core::client::SubscriptionClientT;
-    ensure_runtime_compatible(client).await?;
+    ensure_runtime_compatible(client)
+        .await
+        .map_err(MintSubmitError::rejected)?;
     let encoded = format!("0x{}", hex::encode(bytes));
     let transaction_hash: Hash = sp_core::hashing::blake2_256(bytes).into();
-    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+    confirm_with_timeout(std::time::Duration::from_secs(120), async {
         let mut statuses = client
             .subscribe::<Value, _>(
                 "author_submitAndWatchExtrinsic",
@@ -236,59 +327,93 @@ pub async fn submit_sudo_extrinsic(client: &WsClient, bytes: &[u8]) -> Result<Ha
                 "author_unwatchExtrinsic",
             )
             .await
-            .context("submitting sudo extrinsic")?;
+            .map_err(submission_error)?;
+        let mut inclusion_seen = false;
         while let Some(status) = statuses.next().await {
-            let status = status.context("watching sudo extrinsic")?;
+            let status = status.map_err(|error| MintSubmitError::Ambiguous(error.into()))?;
             if let Some(finalized) = status.get("finalized") {
-                let block_hash: Hash = serde_json::from_value(finalized.clone())?;
-                let block: Value = client
-                    .request("chain_getBlock", rpc_params![block_hash])
-                    .await?;
-                let extrinsics = block
-                    .pointer("/block/extrinsics")
-                    .and_then(Value::as_array)
-                    .context("finalized block has no extrinsics")?;
-                let index = extrinsics
-                    .iter()
-                    .position(|item| {
-                        item.as_str()
-                            .is_some_and(|s| s.eq_ignore_ascii_case(&encoded))
-                    })
-                    .context("sudo extrinsic absent from finalized block")?;
-                let index = u32::try_from(index).context("extrinsic index overflow")?;
-                let mut key = sp_core::hashing::twox_128(b"System").to_vec();
-                key.extend_from_slice(&sp_core::hashing::twox_128(b"Events"));
-                let events: Option<String> = client
-                    .request(
-                        "state_getStorage",
-                        rpc_params![format!("0x{}", hex::encode(key)), block_hash],
-                    )
-                    .await?;
-                let events = events.context("missing finalized System.Events")?;
-                let bytes = hex::decode(events.strip_prefix("0x").context("invalid event hex")?)?;
-                check_sudo_events(&bytes, index)?;
+                finalized_mint_receipt(client, finalized, &encoded, who, amount)
+                    .await
+                    .map_err(MintSubmitError::Ambiguous)?;
                 return Ok(transaction_hash);
             }
-            if ["invalid", "dropped", "usurped", "finalityTimeout"]
-                .iter()
-                .any(|name| status.as_str() == Some(*name) || status.get(*name).is_some())
-            {
-                anyhow::bail!("sudo transaction did not finalize: {status}");
+            if let Some(error) = terminal_mint_status(&status, &mut inclusion_seen) {
+                return Err(error);
             }
         }
-        anyhow::bail!("sudo transaction subscription ended without a finalized receipt")
+        Err(MintSubmitError::Ambiguous(anyhow!(
+            "mint subscription ended without a finalized receipt"
+        )))
     })
     .await
-    .context("sudo confirmation timed out; outcome unknown, transaction was not resubmitted")?
 }
 
-fn check_sudo_events(bytes: &[u8], index: u32) -> Result<()> {
+async fn finalized_mint_receipt(
+    client: &WsClient,
+    finalized: &Value,
+    encoded: &str,
+    who: &runtime::AccountId,
+    amount: u128,
+) -> Result<()> {
+    let block_hash: Hash = serde_json::from_value(finalized.clone())?;
+    let version: Value = client
+        .request("state_getRuntimeVersion", rpc_params![block_hash])
+        .await?;
+    check_runtime_version(&version)?;
+    let block: Value = client
+        .request("chain_getBlock", rpc_params![block_hash])
+        .await?;
+    let extrinsics = block
+        .pointer("/block/extrinsics")
+        .and_then(Value::as_array)
+        .context("finalized block has no extrinsics")?;
+    let index = extrinsics
+        .iter()
+        .position(|item| {
+            item.as_str()
+                .is_some_and(|s| s.eq_ignore_ascii_case(encoded))
+        })
+        .context("mint extrinsic absent from finalized block")?;
+    let index = u32::try_from(index).context("extrinsic index overflow")?;
+    let mut key = sp_core::hashing::twox_128(b"System").to_vec();
+    key.extend_from_slice(&sp_core::hashing::twox_128(b"Events"));
+    let events: Option<String> = client
+        .request(
+            "state_getStorage",
+            rpc_params![format!("0x{}", hex::encode(key)), block_hash],
+        )
+        .await?;
+    let events = events.context("missing finalized System.Events")?;
+    let bytes = hex::decode(events.strip_prefix("0x").context("invalid event hex")?)?;
+    check_mint_events(&bytes, index, who, amount)
+}
+
+async fn confirm_with_timeout<T>(
+    duration: std::time::Duration,
+    confirmation: impl std::future::Future<Output = std::result::Result<T, MintSubmitError>>,
+) -> std::result::Result<T, MintSubmitError> {
+    tokio::time::timeout(duration, confirmation)
+        .await
+        .map_err(|_| {
+            MintSubmitError::Ambiguous(anyhow!(
+                "mint confirmation timed out; transaction was not resubmitted"
+            ))
+        })?
+}
+
+fn check_mint_events(
+    bytes: &[u8],
+    index: u32,
+    who: &runtime::AccountId,
+    amount: u128,
+) -> Result<()> {
     use codec::DecodeAll;
     use quip_protocol_runtime::RuntimeEvent;
     let events = Vec::<frame_system::EventRecord<RuntimeEvent, Hash>>::decode_all(&mut &bytes[..])
         .context("decoding finalized events with pinned runtime; check runtime compatibility")?;
     let mut outer_success = false;
-    let mut inner_success = false;
+    let mut minted = false;
+    let mut issued = false;
     for record in events {
         if record.phase != frame_system::Phase::ApplyExtrinsic(index) {
             continue;
@@ -299,26 +424,42 @@ fn check_sudo_events(bytes: &[u8], index: u32) -> Result<()> {
             }
             RuntimeEvent::System(frame_system::Event::ExtrinsicFailed {
                 dispatch_error, ..
-            }) => anyhow::bail!("sudo extrinsic failed: {dispatch_error:?}"),
-            RuntimeEvent::Sudo(pallet_sudo::Event::Sudid { sudo_result }) => {
-                sudo_result.map_err(|error| anyhow!("sudo inner call failed: {error:?}"))?;
-                inner_success = true;
+            }) => anyhow::bail!("mint extrinsic failed: {dispatch_error:?}"),
+            RuntimeEvent::FaucetOps(pallet_faucet_ops::Event::Minted {
+                who: recipient,
+                amount: value,
+            }) => {
+                anyhow::ensure!(
+                    &recipient == who && value == amount && !minted,
+                    "unexpected or duplicate mint event"
+                );
+                minted = true;
+            }
+            RuntimeEvent::EmissionController(pallet_emission_controller::Event::FaucetMinted {
+                who: recipient,
+                amount: value,
+            }) => {
+                anyhow::ensure!(
+                    &recipient == who && value == amount && !issued,
+                    "unexpected or duplicate issuance event"
+                );
+                issued = true;
             }
             _ => {}
         }
     }
     anyhow::ensure!(
-        outer_success && inner_success,
-        "finalized sudo receipt lacks successful System and Sudid events"
+        outer_success && minted && issued,
+        "finalized mint receipt lacks successful System and matching FaucetOps.Minted / EmissionController.FaucetMinted events"
     );
     Ok(())
 }
 
 #[cfg(test)]
-mod sudo_receipt_tests {
+mod mint_receipt_tests {
     use super::*;
     use frame_system::{EventRecord, Phase};
-    use quip_protocol_runtime::RuntimeEvent;
+    use quip_protocol_runtime::{AccountId, RuntimeEvent};
     fn record(index: u32, event: RuntimeEvent) -> EventRecord<RuntimeEvent, Hash> {
         EventRecord {
             phase: Phase::ApplyExtrinsic(index),
@@ -331,51 +472,129 @@ mod sudo_receipt_tests {
             dispatch_info: Default::default(),
         })
     }
+    fn minted() -> RuntimeEvent {
+        RuntimeEvent::FaucetOps(pallet_faucet_ops::Event::Minted {
+            who: AccountId::from([1; 32]),
+            amount: 100,
+        })
+    }
+    fn issued() -> RuntimeEvent {
+        RuntimeEvent::EmissionController(pallet_emission_controller::Event::FaucetMinted {
+            who: AccountId::from([1; 32]),
+            amount: 100,
+        })
+    }
+    fn check(events: Vec<EventRecord<RuntimeEvent, Hash>>) -> Result<()> {
+        check_mint_events(&events.encode(), 2, &AccountId::from([1; 32]), 100)
+    }
     #[test]
-    fn outer_success_does_not_hide_inner_bad_origin() {
-        let bytes = vec![
-            record(
-                2,
-                RuntimeEvent::Sudo(pallet_sudo::Event::Sudid {
-                    sudo_result: Err(sp_runtime::DispatchError::BadOrigin),
-                }),
-            ),
+    fn requires_both_events_for_exact_extrinsic_and_payment() {
+        assert!(check(vec![
+            record(2, issued()),
+            record(2, minted()),
+            record(2, success())
+        ])
+        .is_ok());
+        assert!(check(vec![
+            record(2, issued()),
+            record(1, minted()),
+            record(2, success())
+        ])
+        .is_err());
+        assert!(check(vec![
+            record(2, issued()),
+            record(2, minted()),
+            record(1, success())
+        ])
+        .is_err());
+        assert!(check(vec![record(2, minted()), record(2, success())]).is_err());
+        assert!(check(vec![
+            record(1, issued()),
+            record(2, minted()),
+            record(2, success())
+        ])
+        .is_err());
+        assert!(check(vec![
+            record(2, issued()),
+            record(2, issued()),
+            record(2, minted()),
+            record(2, success())
+        ])
+        .is_err());
+        assert!(check(vec![record(2, success())]).is_err());
+        assert!(check(vec![record(2, minted())]).is_err());
+        let events = vec![
+            record(2, issued()),
+            record(2, minted()),
             record(2, success()),
         ]
         .encode();
-        assert!(check_sudo_events(&bytes, 2)
-            .unwrap_err()
-            .to_string()
-            .contains("inner call failed"));
+        assert!(check_mint_events(&events, 2, &AccountId::from([2; 32]), 100).is_err());
+        assert!(check_mint_events(&events, 2, &AccountId::from([1; 32]), 101).is_err());
+        assert!(check_mint_events(&[0xff], 2, &AccountId::from([1; 32]), 100).is_err());
     }
     #[test]
-    fn requires_both_success_events_for_exact_extrinsic() {
-        let events = vec![
-            record(
-                2,
-                RuntimeEvent::Sudo(pallet_sudo::Event::Sudid {
-                    sudo_result: Ok(()),
-                }),
-            ),
+    fn dispatch_failure_overrides_success() {
+        let failure = RuntimeEvent::System(frame_system::Event::ExtrinsicFailed {
+            dispatch_error: sp_runtime::DispatchError::BadOrigin,
+            dispatch_info: Default::default(),
+        });
+        assert!(check(vec![
+            record(2, issued()),
+            record(2, minted()),
             record(2, success()),
-        ];
-        assert!(check_sudo_events(&events.encode(), 2).is_ok());
-        assert!(check_sudo_events(&events.encode(), 1).is_err());
-        assert!(check_sudo_events(&vec![record(2, success())].encode(), 2).is_err());
-        assert!(check_sudo_events(&events[..1].encode(), 2).is_err());
+            record(2, failure)
+        ])
+        .is_err());
+        assert!(check(vec![
+            record(2, issued()),
+            record(2, minted()),
+            record(2, minted()),
+            record(2, success())
+        ])
+        .is_err());
     }
     #[test]
-    fn rejects_outer_failure_and_malformed_events() {
-        let bytes = vec![record(
-            2,
-            RuntimeEvent::System(frame_system::Event::ExtrinsicFailed {
-                dispatch_error: sp_runtime::DispatchError::BadOrigin,
-                dispatch_info: Default::default(),
+    fn fuse_and_budget_dispatch_errors_fail_top_up() {
+        for dispatch_error in [
+            pallet_faucet_ops::Error::<runtime::Runtime>::Disabled.into(),
+            pallet_emission_controller::Error::<runtime::Runtime>::BudgetExceeded.into(),
+        ] {
+            assert!(check(vec![record(
+                2,
+                RuntimeEvent::System(frame_system::Event::ExtrinsicFailed {
+                    dispatch_error,
+                    dispatch_info: Default::default(),
+                })
+            )])
+            .is_err());
+        }
+    }
+    #[test]
+    fn unrelated_scheduled_funding_failure_is_not_a_mint_failure() {
+        let mut unrelated = record(
+            0,
+            RuntimeEvent::EmissionController(pallet_emission_controller::Event::FundingFailed {
+                subnet: 0,
+                amount: 100,
+                error: sp_runtime::DispatchError::BadOrigin,
             }),
-        )]
-        .encode();
-        assert!(check_sudo_events(&bytes, 2).is_err());
-        assert!(check_sudo_events(&[0xff], 2).is_err());
+        );
+        unrelated.phase = Phase::Initialization;
+        assert!(check(vec![
+            unrelated,
+            record(2, issued()),
+            record(2, minted()),
+            record(2, success())
+        ])
+        .is_ok());
+    }
+    #[tokio::test]
+    async fn unknown_outcome_times_out_without_retrying() {
+        let result =
+            confirm_with_timeout::<()>(std::time::Duration::from_millis(1), std::future::pending())
+                .await;
+        assert!(result.unwrap_err().to_string().contains("outcome unknown"));
     }
 }
 
@@ -407,5 +626,85 @@ mod runtime_version_tests {
         ] {
             assert!(check_runtime_version(&value).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod submission_classification_tests {
+    use super::*;
+    use jsonrpsee::{core::client::Error, types::ErrorObjectOwned};
+    fn rpc(code: i32, message: &str) -> MintSubmitError {
+        submission_error(Error::Call(ErrorObjectOwned::owned(
+            code, message, None::<()>,
+        )))
+    }
+    #[test]
+    fn only_definite_nonce_rejections_are_retryable() {
+        for (code, message) in [
+            (1010, "Transaction is outdated"),
+            (1010, "Stale"),
+            (1014, "Priority is too low"),
+        ] {
+            let error = rpc(code, message);
+            assert!(error.is_stale_nonce());
+            assert!(!error.is_ambiguous());
+        }
+        for (code, message) in [
+            (1010, "Invalid signature"),
+            (1010, "Payment"),
+            (-32601, "Method not found"),
+        ] {
+            let error = rpc(code, message);
+            assert!(!error.is_stale_nonce());
+            assert!(!error.is_ambiguous());
+        }
+        for error in [
+            rpc(1013, "Already imported"),
+            rpc(-32603, "Internal error"),
+            submission_error(Error::RequestTimeout),
+            submission_error(Error::Custom("Stale transport failure".into())),
+        ] {
+            assert!(error.is_ambiguous());
+            assert!(!error.is_stale_nonce());
+        }
+        assert!(
+            !MintSubmitError::rejected(anyhow!("runtime mismatch before submission"))
+                .is_ambiguous()
+        );
+    }
+    #[test]
+    fn invalid_after_inclusion_or_retraction_remains_ambiguous() {
+        for prior in [
+            serde_json::json!({"inBlock": "0x01"}),
+            serde_json::json!({"retracted": "0x01"}),
+        ] {
+            let mut inclusion_seen = false;
+            assert!(terminal_mint_status(&prior, &mut inclusion_seen).is_none());
+            assert!(
+                terminal_mint_status(&serde_json::json!("ready"), &mut inclusion_seen).is_none()
+            );
+            let error =
+                terminal_mint_status(&serde_json::json!("invalid"), &mut inclusion_seen).unwrap();
+            assert!(error.is_ambiguous());
+            assert!(!error.is_stale_nonce());
+        }
+    }
+    #[test]
+    fn invalid_does_not_latch_but_lost_finality_does() {
+        assert!(
+            !terminal_mint_status(&serde_json::json!("invalid"), &mut false)
+                .unwrap()
+                .is_ambiguous()
+        );
+        for status in [
+            serde_json::json!("dropped"),
+            serde_json::json!({"usurped": "0x01"}),
+            serde_json::json!({"finalityTimeout": "0x02"}),
+        ] {
+            let error = terminal_mint_status(&status, &mut false).unwrap();
+            assert!(error.is_ambiguous());
+            assert!(!error.is_stale_nonce());
+        }
+        assert!(terminal_mint_status(&serde_json::json!("ready"), &mut false).is_none());
     }
 }

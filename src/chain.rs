@@ -6,7 +6,7 @@
 
 use std::{
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -14,7 +14,7 @@ use std::{
 
 use crate::client::{
     build_signed_extrinsic, encode_extrinsic, fetch_chain_context, submit_extrinsic,
-    submit_sudo_extrinsic, ws_client, ChainContext,
+    submit_mint_extrinsic, ws_client, ChainContext,
 };
 use anyhow::{bail, Context, Result};
 use codec::{Decode, Encode};
@@ -38,6 +38,27 @@ type AccountInfo = frame_system::AccountInfo<u32, AccountData>;
 
 const DEV_CHAIN_PREFIXES: [&str; 3] = ["Development", "Local Testnet", "quip-local"];
 
+// Three refresh intervals (6s) plus 6s RPC headroom. Failed checks close
+// immediately; a hung check naturally expires without flapping on each refresh.
+const READINESS_TTL: Duration = Duration::from_secs(12);
+#[derive(Default)]
+struct Readiness {
+    checked_at: Option<Instant>,
+    remaining: u128,
+}
+impl Readiness {
+    fn record(&mut self, remaining: Option<u128>) {
+        self.checked_at = remaining.map(|_| Instant::now());
+        self.remaining = remaining.unwrap_or(0);
+    }
+    fn is_ready(&self, now: Instant) -> bool {
+        self.remaining > 0
+            && self
+                .checked_at
+                .is_some_and(|at| now.duration_since(at) < READINESS_TTL)
+    }
+}
+
 /// Connected node client with ordered failover.
 pub struct ChainClient {
     urls: Vec<String>,
@@ -46,6 +67,8 @@ pub struct ChainClient {
     base_ctx: RwLock<ChainContext>,
     funder: AccountId,
     allow_any_chain: bool,
+    readiness: RwLock<Readiness>,
+    mint_failed: AtomicBool,
 }
 
 impl ChainClient {
@@ -63,6 +86,8 @@ impl ChainClient {
             base_ctx: RwLock::new(base_ctx),
             funder,
             allow_any_chain,
+            readiness: RwLock::new(Readiness::default()),
+            mint_failed: AtomicBool::new(false),
         })
     }
 
@@ -80,6 +105,7 @@ impl ChainClient {
                     if !self.allow_any_chain {
                         verify_dev_chain(&client).await?;
                     }
+                    self.verify_faucet(&client).await?;
                     *self.client.write() = Arc::new(client);
                     self.idx.store(i, Ordering::SeqCst);
                     warn!("faucet failed over to node[{i}]: {}", self.urls[i]);
@@ -106,48 +132,73 @@ impl ChainClient {
     /// hash). Drive periodically from a background task.
     pub async fn refresh(&self) -> Result<()> {
         let client = self.client();
-        let ctx = fetch_chain_context(&client, &self.funder).await?;
+        let ctx = match fetch_chain_context(&client, &self.funder).await {
+            Ok(ctx) => ctx,
+            Err(error) => {
+                self.readiness.write().record(None);
+                return Err(error);
+            }
+        };
+        self.verify_faucet(&client).await?;
         *self.base_ctx.write() = ctx;
         Ok(())
     }
 
-    /// Submit a sudo/funder extrinsic, fetching the funder nonce fresh each try and
-    /// retrying on a stale-nonce rejection. The funder (chain sudo key) may be a
-    /// shared, active account, so a cached/lane nonce goes stale — fetch-fresh +
-    /// retry is the correct model. Waits for finalization and checks Sudid's
-    /// inner result; not failed over or resubmitted on ambiguous confirmation.
+    /// A single direct mint submission. Ambiguous receipts are never retried.
     pub async fn submit_funder(
         &self,
         signer: &HybridPair,
         account: &AccountId,
-        call: RuntimeCall,
+        who: AccountId,
+        amount: u128,
     ) -> Result<Hash> {
-        let mut last_err = String::new();
+        anyhow::ensure!(account == &self.funder, "unexpected funder account");
         for attempt in 0..5 {
-            let nonce = self.next_index(account).await?;
-            let mut ctx = *self.base_ctx.read();
-            ctx.nonce = nonce;
-            let extrinsic = build_signed_extrinsic(signer, call.clone(), ctx);
-            let bytes = encode_extrinsic(&extrinsic);
             let client = self.client();
-            match submit_sudo_extrinsic(&client, &bytes).await {
+            let remaining = self.verify_faucet(&client).await?;
+            anyhow::ensure!(
+                amount > 0 && amount <= remaining,
+                "top-up exceeds remaining faucet budget ({remaining}) or is zero"
+            );
+            // Refetch both nonce and era context on every definite stale rejection.
+            let ctx = fetch_chain_context(&client, account).await?;
+            let call = crate::calls::mint(who.clone(), amount);
+            let bytes = encode_extrinsic(&build_signed_extrinsic(signer, call, ctx));
+            match submit_mint_extrinsic(&client, &bytes, &who, amount).await {
                 Ok(hash) => return Ok(hash),
-                Err(err) => {
-                    let msg = format!("{err:#}");
-                    let stale = msg.contains("outdated")
-                        || msg.contains("Stale")
-                        || msg.contains("Priority is too low");
-                    if stale && attempt < 4 {
-                        warn!("funder nonce stale (attempt {attempt}); refetching");
-                        last_err = msg;
-                        tokio::time::sleep(Duration::from_millis(300)).await;
-                        continue;
+                Err(error) if error.is_stale_nonce() && attempt < 4 => {
+                    warn!("authority nonce rejected (attempt {attempt}); refreshing nonce");
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+                Err(error) => {
+                    if error.is_ambiguous() {
+                        self.mint_failed.store(true, Ordering::SeqCst);
+                        self.readiness.write().record(None);
                     }
-                    return Err(err).context("submitting funder extrinsic");
+                    return Err(error.into());
                 }
             }
         }
-        bail!("funder submit stale after retries: {last_err}")
+        unreachable!("last attempt returns its result")
+    }
+
+    /// Cached finalized controls: hot paths do not repeat the storage RPCs.
+    pub fn is_ready(&self) -> bool {
+        !self.mint_failed.load(Ordering::SeqCst) && self.readiness.read().is_ready(Instant::now())
+    }
+
+    pub async fn ensure_faucet_ready(&self) -> Result<u128> {
+        self.verify_faucet(&self.client()).await
+    }
+
+    async fn verify_faucet(&self, client: &WsClient) -> Result<u128> {
+        anyhow::ensure!(
+            !self.mint_failed.load(Ordering::SeqCst),
+            "previous mint failed or has an unknown outcome; reconcile before restarting faucet"
+        );
+        let result = crate::faucet_state::check(client, &self.funder).await;
+        self.readiness.write().record(result.as_ref().ok().copied());
+        result
     }
 
     /// Submit a transfer from the dedicated base wallet, drawing the nonce from its
@@ -172,6 +223,7 @@ impl ChainClient {
         confirm_timeout: Duration,
         confirm_poll: Duration,
     ) -> Result<Hash> {
+        anyhow::ensure!(self.is_ready(), "faucet controls unavailable or stale");
         let mut last_err = String::new();
         for attempt in 0..5 {
             let nonce = lane.allocate();
@@ -327,38 +379,6 @@ impl ChainClient {
         bail!("free_balance retry exhausted")
     }
 
-    /// The chain's current `Sudo.Key` (the only origin allowed to dispatch the
-    /// root-only `FaucetOps.mint`), or `None` if sudo is unset. Idempotent →
-    /// fails over once on a transport error.
-    pub async fn sudo_key(&self) -> Result<Option<AccountId>> {
-        let mut storage_key = twox_128(b"Sudo").to_vec();
-        storage_key.extend(twox_128(b"Key")); // plain StorageValue: no key hashing
-        let storage_key = format!("0x{}", hex::encode(storage_key));
-        for attempt in 0..2 {
-            let client = self.client();
-            let raw: std::result::Result<Option<String>, _> = client
-                .request("state_getStorage", rpc_params![storage_key.clone()])
-                .await;
-            match raw {
-                Ok(None) => return Ok(None),
-                Ok(Some(encoded)) => {
-                    let stripped = encoded.strip_prefix("0x").unwrap_or(&encoded);
-                    let bytes = hex::decode(stripped).context("decoding Sudo.Key storage")?;
-                    let account = AccountId::decode(&mut bytes.as_slice())
-                        .context("decoding Sudo.Key AccountId")?;
-                    return Ok(Some(account));
-                }
-                Err(err) => {
-                    if attempt == 1 {
-                        return Err(err).context("querying Sudo.Key");
-                    }
-                    self.reconnect().await?;
-                }
-            }
-        }
-        bail!("sudo_key retry exhausted")
-    }
-
     /// The chain's next nonce for `account` (seeds nonce lanes / resync on drift).
     pub async fn next_index(&self, account: &AccountId) -> Result<u32> {
         let ss58 = account.to_ss58check();
@@ -419,4 +439,26 @@ fn account_storage_key(account: &AccountId) -> String {
     key.extend(blake2_128(&encoded)); // Blake2_128Concat hasher = blake2_128(x) ++ x
     key.extend(encoded);
     format!("0x{}", hex::encode(key))
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+    #[test]
+    fn refresh_keeps_last_success_until_failure_or_expiry() {
+        let mut state = Readiness::default();
+        assert!(!state.is_ready(Instant::now()));
+        state.record(Some(100));
+        let at = state.checked_at.unwrap();
+        // Starting a refresh does not invalidate the previous successful sample.
+        assert!(state.is_ready(at + Duration::from_secs(2)));
+        assert!(state.is_ready(at + Duration::from_secs(11)));
+        assert!(!state.is_ready(at + READINESS_TTL));
+        state.record(None);
+        assert!(!state.is_ready(Instant::now()));
+        state.record(Some(100));
+        assert!(state.is_ready(Instant::now()));
+        state.record(Some(0));
+        assert!(!state.is_ready(Instant::now()));
+    }
 }

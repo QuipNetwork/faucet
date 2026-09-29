@@ -13,19 +13,25 @@ path = "src/main.rs"
 # --- Quip runtime + H4 transaction stack (R2). ---
 [dependencies.quip-protocol-runtime]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+default-features = false
+features = ["std"]
+
+[dependencies.pallet-emission-controller]
+git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
+rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
 default-features = false
 features = ["std"]
 
@@ -33,27 +39,22 @@ features = ["std"]
 # so cargo unifies every substrate crate to one commit (no duplicate-type hell). ---
 [dependencies.frame-system]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+rev = "845eb9986c7131056b077d14ad7249f9d65ca111"
 features = ["std"]
 
 [dependencies.pallet-balances]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
-features = ["std"]
-
-[dependencies.pallet-sudo]
-git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+rev = "845eb9986c7131056b077d14ad7249f9d65ca111"
 features = ["std"]
 
 [dependencies.sp-core]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+rev = "845eb9986c7131056b077d14ad7249f9d65ca111"
 features = ["std", "serde"]
 
 [dependencies.sp-runtime]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+rev = "845eb9986c7131056b077d14ad7249f9d65ca111"
 features = ["std", "serde"]
 
 [dependencies]
@@ -75,3 +76,8 @@ parking_lot = "0.12"
 # restriction set from the workspace can be layered on once it builds green.
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies.sp-io]
+git = "https://github.com/QuipNetwork/polkadot-sdk.git"
+rev = "845eb9986c7131056b077d14ad7249f9d65ca111"
+features = ["std"]

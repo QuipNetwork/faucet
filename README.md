@@ -1,41 +1,39 @@
 # Quip Faucet
 
 Standalone dev faucet for [Quip Network](https://gitlab.com/quip.network)
-substrate chains. Listens on HTTP and submits
-`Sudo.sudo(FaucetOps.mint)` extrinsics from a single funded account
-(typically `//Alice` on a dev chain) to whichever destination is
-requested. Per-destination rate-limited.
+substrate chains, compiled for the pinned Phase 2 runtime (spec 119, transaction 7).
+A Foundation-appointed operational key submits direct signed `FaucetOps.mint`
+to replenish a dedicated base wallet. The base wallet transfers to `/request`
+recipients and pre-funds the `/sign` pool using concurrent nonce lanes.
 
-A concurrent Rust binary (`src/`, `quip-faucet`) built on tokio + jsonrpsee
-(multiplexed RPC, no global lock) with **per-account nonce lanes**, so `/request`
-mints pipeline concurrently instead of serializing one transaction per block. It
-reuses the Quip runtime, crypto, and client crates (`quip-protocol-runtime`,
-`quip-transaction-crypto`, `quip-tools`) so the extrinsic wire format can never
-drift from the chain. Each request mints through the root-only `FaucetOps` pallet
-wrapped in `Sudo.sudo(...)`, so the configured faucet key must be the chain's
-sudo/dev key.
+The configured `--faucet-key` / `QUIP_FAUCET_FAUCET_KEY` must match on-chain
+`FaucetOps.Authority` and hold enough balance to pay transaction fees. Startup,
+each refresh (two-second interval), and each mint check finalized Authority,
+Enabled fuse, remaining emission-controller faucet budget and runtime version.
+Requests and pool signing use that cached result without repeating storage RPCs.
+The previous success remains ready during refresh, expires after 12 seconds,
+and is invalidated immediately when a check fails.
+A mismatch, revoked key, closed fuse, exhausted budget or unreadable controls
+stops service funding/signing; `/health` reports 503 when checks fail or become
+stale. `--pool-size 0` disables `/sign` only.
 
 Used by [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
-as the `faucet` profile in its docker-compose stack.
-
-> **Never run against a production chain.** The startup check refuses to
-> bind unless the connected chain reports a known dev name. See the
-> `--allow-any-chain` flag below for the (deliberate) override.
-
-> **Funder must be the chain sudo key.** The faucet mints via
-> `Sudo.sudo(FaucetOps.mint)`, which the runtime authorizes only for
-> `Sudo::Key`. At startup it reads the chain's `Sudo.Key` and **exits with an
-> error if the funder doesn't match** — otherwise every mint would be accepted
-> into the tx pool and silently dropped, so `/request` would return `200` yet
-> never fund anything. `--pool-size 0` disables the `/sign` pool (it returns
-> `503`); `/request` is unaffected.
+as the `faucet` profile in its docker-compose stack. The existing environment
+variable is retained; operators must change its value to the appointed authority.
+The startup chain-name guard requires a known dev chain unless explicitly
+configured with `--allow-any-chain` for a controlled testnet.
 
 ## API
 
 | Method & path | Body | Success |
 |---|---|---|
+<<<<<<< HEAD
 | `POST /request` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"extrinsic_hash", "block_hash", "amount", "dest", "dest_account"}` — faucet mints and broadcasts |
 | `POST /sign` | `{"dest": "<ss58, 0x+64-hex account, or 0x+40-hex EVM address>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "dest_account", "mode"}` — receiver broadcasts |
+=======
+| `POST /request` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"extrinsic_hash", "amount", "dest"}` — base wallet transfers and broadcasts |
+| `POST /sign` | `{"dest": "<ss58 or 0x-hex>", "amount": <plancks>}` | `200 {"signed_extrinsic", "extrinsic_hash", "nonce", "from", "amount", "dest", "mode"}` — receiver broadcasts |
+>>>>>>> fba560e (feat(faucet): mint directly with governed runtime 119 authority)
 | `GET /health`   | —    | `200 {"status": "ok"}` |
 
 `amount` is optional and defaults to `--amount` (one dispense). A request may
@@ -176,32 +174,26 @@ window, up to `--pool-max-size`. Tune the pool with `--pool-size`,
 
 ## Signing modes
 
-Auto-detected from chain metadata at startup:
+This client uses H4 `HybridTxSignature` (sr25519 + FN-DSA-512) and the pinned
+runtime's native signed-extension tuple. It does not auto-detect or support
+vanilla sr25519 chains. Base/pool accounts are hard-derived from the configured
+SURI. Rotating that key changes these derived accounts too; drain or explicitly
+retain access to old wallets before retiring the old secret.
 
-- **sr25519** — vanilla `MultiSignature` chains.
-- **hybrid** — H4 `HybridTxSignature` chains (sr25519 + FN-DSA-512).
-
-Either way the funder key is derived from its SURI (`//Alice`, a raw seed, or a
-mnemonic) via `quip-transaction-crypto`; the local R2-native transaction helper
-uses the runtime's exported signed-extension tuple. The pool and base accounts
-are hard-derived from the funder, so the signed extrinsic envelope always
-matches the chain, with no hardcoded dev-seed table.
-
-The H3-to-H4 migration preserves SURI and mnemonic formats, but the new suite
-derives different hybrid public keys and therefore different funder, base, and
-pool account IDs from the same secret. Run this faucet against an R2 chain whose
-`Sudo.Key` was initialized for H4; the startup sudo-key check fails fast if the
-configured key belongs to the old account domain.
+Calls, events and storage values use Rust types from the pinned runtime, rather
+than generated Subxt bindings. The metadata export example records that same
+schema for review; regenerate it whenever the runtime revision changes.
 
 ## Build, test & CI
 
 Needs SSH access (local) or a CI job token to fetch the private
-`quip-validator` dependency. Unit tests mock the chain, so no node is required.
+`quip-validator` dependency. Unit tests exercise encoded events and control checks without a node.
 
 ```bash
 cargo fmt --all -- --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo run --locked --example export_metadata -- metadata/runtime-119.scale
 cargo build --release --locked
 ```
 
@@ -217,29 +209,47 @@ AGPL-3.0-or-later. See `LICENSE`.
 
 ## Top-up receipts and runtime 119 rollout
 
-Funder top-ups now wait up to 120 seconds for a finalized receipt and require
-both `System.ExtrinsicSuccess` and `Sudo.Sudid { sudo_result: Ok }` for the exact
-submitted extrinsic. Inner dispatch errors, missing/undecodable events, and
-confirmation timeouts fail the top-up; pool acceptance is not success. An
-ambiguous confirmation is not automatically resubmitted by that call.
+Funder top-ups wait up to 120 seconds for finalization. Success requires
+`System.ExtrinsicSuccess`, `FaucetOps.Minted`, and the canonical issuance event
+`EmissionController.FaucetMinted`, with the requested recipient/amount and exact
+submitted extrinsic index. Dispatch errors, missing/malformed/mismatched or
+duplicate events fail closed. `FundingFailed` belongs to scheduled accrual in
+initialization and is not a faucet mint receipt.
 
-This fixes failure reporting for the current sudo-based deployment. It does not
-make this service compatible with the Phase 1 runtime 119 faucet authority:
-that runtime rejects Root for minting. Before deploying against 119, repin the
-runtime dependency and update the call builder to direct signed minting,
-startup authority/fuse/budget checks, and the Akash deployment configuration.
-The pinned runtime event decoder fails closed on incompatible event schemas.
+Pre-submission version failures, authoritative pool rejections and `invalid`
+status with no inclusion history return errors without locking out the service.
+An `invalid` status after `inBlock` or `retracted` is ambiguous: the same
+transaction may have landed on the canonical branch. Definite stale-nonce/low-
+priority rejections retry up to five submissions with fresh nonce/era context.
+Transport failures, subscription loss, dropped/usurped/finalityTimeout status,
+timeouts and unverified finalized receipts latch the service unavailable,
+including background top-ups. Reconcile the exact transaction before restarting;
+an ambiguous receipt never triggers another mint on the next monitor tick.
+AlreadyImported and generic server errors are conservatively ambiguous.
 
-Startup, each context refresh, and each transaction submission check on-chain
-`specVersion` and `transactionVersion` against the compiled runtime. A mismatch
-returns a clear rebuild error before submission. This also prevents a failed
-background refresh from allowing submissions with an outdated cached context.
-An upgrade racing submission still fails closed during receipt decoding.
+Startup, context refreshes and transaction submissions retain exact
+`specVersion` / `transactionVersion` guards. Control storage reads use one finalized block
+hash, with strict SCALE decoding. Insufficient budget rejects a top-up before
+submission; governance changes racing that check are still enforced on chain.
+Existing signed pool transactions cannot be recalled by the service.
 
-Phase 2 (`ru/spike/validator-onboarding`) retains direct signed minting by the
-stored operational authority. Foundation governance appoints/revokes that key
-with `faucetOps.set_authority(Some(account))` / `None`, and can also mint directly.
-Routine top-ups do not need a vote. The service integration must check current
-Authority, Enabled fuse, budget and runtime version, and stop on revocation;
-changing authority never resets the fuse or budget. The existing sudo-based
-call builder still needs replacement before deployment against this runtime.
+Foundation rotates/revokes the operational key through
+`faucetOps.set_authority(Some(account))` / `None`. Mint call index is 0, disable
+is 1, and set_authority is 2. Rotation changes neither the fuse nor budget nor
+issued totals. Use a separate funded authority account in Akash, update its
+secret after governance execution, then verify service readiness. A paused or
+permanently disabled faucet cannot be revived by rotating the key.
+
+Before switching secrets, stop serving requests/signatures and wait for any
+handed-out pool transactions to finalize or expire. Derive the new base wallet
+from the new authority SURI, then use the **old base wallet signer** to transfer
+its remaining balance to that new base wallet. Drain unused old pool balances
+with their old derived signers too, retaining enough for fees until complete.
+Only then finalize the Foundation authority change, switch the service secret
+and restart. Keep the old secret until all transfers are confirmed; changing the
+authority alone does not move any base or pool funds.
+
+The downstream compose repository owns its secret value and image pin; update
+both to the approved runtime-119 build during rollout. This repository changes
+no deployed credentials or chain state. Live mint/rotation/revocation tests and
+published CI remain deployment gates until recorded as verified.
