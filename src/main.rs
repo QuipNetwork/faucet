@@ -115,8 +115,11 @@ async fn main() -> Result<()> {
         pool,
     });
 
-    init_pool(&state).await?;
+    // Keep the cached controls fresh while the pool is funded, and re-check once
+    // now: the startup top-up waits for finality, which outlives READINESS_TTL.
     spawn_refresh(Arc::clone(&state));
+    state.chain.ensure_faucet_ready().await?;
+    init_pool(&state).await?;
     spawn_replenish(Arc::clone(&state));
     spawn_base_monitor(Arc::clone(&state));
     spawn_base_nonce_reconcile(Arc::clone(&state));
