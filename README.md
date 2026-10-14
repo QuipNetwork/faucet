@@ -152,7 +152,8 @@ Runtime environment variables (all optional):
 The faucet can ship its own log records to a
 [OneUptime](https://observe.quip.network) instance over OTLP/HTTP, in addition
 to writing them to stdout as before. The reason is the audit trail: every
-dispense is a use of the chain's sudo key, and on Flux the console those records
+dispense spends what the faucet's minting key minted (the FaucetOps authority on
+runtime 119; before it, the chain's sudo key), and on Flux the console those records
 live in is wiped on every update — not only when the app moves — and cannot be
 recovered afterwards.
 

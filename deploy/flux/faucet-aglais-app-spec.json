@@ -48,9 +48,12 @@
     "⭐ RUNTIME 119 AUTHORITY MODEL. The faucet mints with FaucetOps.mint, signed by the FaucetOps",
     "authority that the Foundation appoints with a 2-of-3 setAuthority motion, not by sudo. At",
     "genesis the authority is op-1, which is also sudo: the faucet must NOT run on op-1's key.",
-    "Relaunch order: fund F, pass setAuthority(F), wait until that block is FINALIZED, then update",
-    "this app with F's mnemonic and the new repotag in ONE Soft Reinstall. Any earlier and the",
-    "faucet crash-loops on 'configured funder is not FaucetOps.Authority'.",
+    "Relaunch order: before the switch, stop the legacy faucet and take op-1's key off the host",
+    "(launch plan T0 step 5). Then fund F, pass setAuthority(F), wait until that block is",
+    "FINALIZED, and update this app with F's mnemonic and the new repotag in ONE Soft Reinstall,",
+    "replacing the prefilled op-1 value. Any earlier and the faucet crash-loops on",
+    "'configured funder is not FaucetOps.Authority'. Check the boot line reads",
+    "'funder: <F> (key from QUIP_FAUCET_FAUCET_KEY)'.",
     "Take F's AccountId for the motion from the binary's own 'funder: <ss58>' line: H4 hybrid",
     "accounts differ from what other tools derive from the same mnemonic.",
     "Startup checks run at the finalized head and fail CLOSED: runtime exactly 119 / tx 7,",
@@ -132,5 +135,5 @@
   ],
   "nodes": [],
   "staticip": false,
-  "enterprise": "<REPLACE:NOT a value you paste — flip the Enterprise toggle in the wizard's General tab, which generates the blob at submit. Leaving this off ships the chain sudo key as PLAINTEXT env>"
+  "enterprise": "<REPLACE:NOT a value you paste — flip the Enterprise toggle in the wizard's General tab, which generates the blob at submit. Leaving this off ships F's mnemonic (the faucet authority) as PLAINTEXT env>"
 }

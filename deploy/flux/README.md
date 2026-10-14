@@ -1,4 +1,4 @@
-# `faucet.testnet.quip.network` on Flux
+# `faucet.aglais.quip.network` on Flux (formerly `faucet.testnet`)
 
 Single raw-Docker component running the CI-built faucet image, one instance, Enterprise
 (encrypted) spec, with TLS terminated by Flux's FDM at a custom domain. Replaces the Akash
@@ -32,6 +32,11 @@ deployment in `../akash/` (kept for history), which cost ~$6.98/mo against ~$1.7
   no credentials, and the gate keys on the destination account and its on-chain balance, not
   on client IP, so connecting direct buys an attacker nothing the public endpoint doesn't
   already give them.
+
+> **Pre-119 history from here to "DNS cutover".** These sections record the August 2026
+> migration, when the funder was op-1, the chain sudo key. For runtime 119 the deployable
+> spec is `faucet-aglais-app-spec.json` and the procedure is "Runtime 119" below. Never
+> paste op-1's mnemonic into a 119 faucet.
 
 ## Files
 
@@ -145,25 +150,26 @@ Consumers that will log failures across that window, all of which retry:
 ```bash
 # EVM (H160) funding — the QUI-1028 feature
 evm="0x$(openssl rand -hex 20)"
-curl -sS -m20 -XPOST https://faucet.testnet.quip.network/request \
+curl -sS -m20 -XPOST https://faucet.aglais.quip.network/request \
   -H 'content-type: application/json' -d "{\"dest\":\"$evm\",\"amount\":11000000000000}"
 # 200 in ~5s; dest_account == <evm without 0x> + "ee" x 12
 
-curl -s -XPOST https://evm-rpc.testnet.quip.network:20049 -H 'content-type: application/json' \
+curl -s -XPOST https://evm-rpc.aglais.quip.network:20049 -H 'content-type: application/json' \
   -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBalance\",\"params\":[\"$evm\",\"latest\"]}"
 # 0x98a44c398c858000 == 10999000000000000000 wei == 10.999, NOT 11.0 — see below
 
 # Native regression
 d="0x$(openssl rand -hex 32)"
-curl -sS -m20 -XPOST https://faucet.testnet.quip.network/request \
+curl -sS -m20 -XPOST https://faucet.aglais.quip.network/request \
   -H 'content-type: application/json' -d "{\"dest\":\"$d\",\"amount\":11000000000000}"
 # re-request the same dest past the 5s lenient window -> 403 destination already funded
-# (that 403 is the proof it landed; use >10 tQUIP so the max-funded gate trips)
+# (that 403 is the proof it landed; use >10 AGLS so the max-funded gate trips)
 ```
 
-Drip above 10 tQUIP or the balance gate won't deny the recheck and the "did it land?" signal
-disappears — the same trap that makes `quip-testnet-health`'s default 0.01 tQUIP drip
-false-report.
+Drip above 10 AGLS or the balance gate won't deny the recheck and the "did it land?" signal
+disappears — the same trap that makes `quip-testnet-health`'s default 0.01 drip
+false-report. On runtime 119 an 11 AGLS drip needs `--max-amount-plancks=11000000000000`
+(see Runtime 119).
 
 ### `eth_getBalance` reads 0.001 tQUIP LOW, and that is correct
 
@@ -188,22 +194,39 @@ The 119 faucet mints with `FaucetOps.mint`, signed by the FaucetOps authority th
 appoints with a 2-of-3 `setAuthority` motion. Sudo no longer mints. At genesis the authority
 is op-1, which is also sudo, so the faucet must run on its own key F:
 
-1. Get F's account from the binary itself: start it with F's mnemonic and an unreachable
-   `--node-url`, and read the `funder: <ss58>` line. H4 hybrid accounts differ from what other
-   tools derive from the same mnemonic.
+0. Before the switch, stop the legacy faucet and take op-1's key off the host (launch plan
+   T0 step 5). On the new chain it would keep signing `Sudo::sudo(FaucetOps.mint)`, which
+   119 rejects, while its `/health` still says ok.
+1. Get F's account from the binary itself. Put F's mnemonic in `QUIP_FAUCET_FAUCET_KEY` (not
+   on the command line), start the binary with an unreachable `--node-url`, and read the
+   line `funder: <ss58> (key from QUIP_FAUCET_FAUCET_KEY)`. If it says `key from the built-in
+   dev default //Alice`, the variable did not reach the process: that account must never go
+   into the motion. H4 hybrid accounts differ from what other tools derive from the same
+   mnemonic, so don't cross-check with them.
 2. Fund F, pass `setAuthority(F)`, and wait until that block is **finalized**. The startup
    checks read the finalized head; any earlier and the faucet crash-loops on
    `configured funder is not FaucetOps.Authority`.
-3. Update `quipfaucet` with the new repotag and F's mnemonic in **one** Soft Reinstall.
+3. Update `quipfaucet` with the new repotag and F's mnemonic in **one** Soft Reinstall. The
+   dashboard's update form arrives prefilled with the live key (op-1): replace it.
 
-Expect `funder: <F>`, `base wallet: …`, then on first boot `base wallet low (0 < …);
-authority-minting …` followed by `faucet minted` (an `outcome=minted` record with the
-extrinsic hash), `pool ready: 8 accounts`, `faucet listening …` and `telemetry enabled …`.
-The `funder confirmed as chain sudo key` line no longer exists. If startup fails, the reason
-is shipped as an `outcome=fatal` record, not only printed to the console.
+Expect, in order: `telemetry enabled …`, `funder: <F> (key from QUIP_FAUCET_FAUCET_KEY)`,
+`base wallet: …`, then on first boot `base wallet low (0 < …); authority-minting …` and
+`faucet minted` (an `outcome=minted` record with the extrinsic hash), `pool ready: 8
+accounts` and `faucet listening …`. The `funder confirmed as chain sudo key` line no longer
+exists. Every mint record has `route=base-topup` and an `outcome` of `minted`,
+`mint_ambiguous` (with the submitted `extrinsic_hash`), `mint_rejected` or
+`mint_not_submitted`. If startup fails, the reason is shipped as an `outcome=fatal` record
+(`faucet stopped: …`), not only printed to the console. Neither record ever contains the
+key.
+
+⚠ An unknown-outcome mint at startup ends the process, and Flux restarts it within seconds,
+so "reconcile before restarting" cannot wait for you. Look up the transaction named in the
+`faucet mint failed` record. The restarted faucet reads the base balance again: a first mint
+that already sits in a block stops a second one, but one still waiting in a node's pool does
+not, and both can land (test tokens only; the budget is 1e9 AGLS).
 
 The spec sets `--max-amount-plancks=11000000000000`: the per-request cap defaults to one
-dispense (10 AGLS), and the 11 AGLS drips below and in `quip-testnet-health` must get
+dispense (10 AGLS), and the 11 AGLS drips above and in `quip-testnet-health` must get
 through it.
 
 There is **no rollback image on 119**: every earlier image mints through
@@ -213,9 +236,10 @@ upgrade block until the new image is live.
 
 ## Rollback
 
-While the Akash lease (DSEQ 27496807) is still open, rollback is a DNS revert: drop the CNAME,
-restore `A 184.105.162.182`, TTL 60. Keep that lease through at least one full soak. Closing
-it is the point of no return; unspent escrow is returned on close.
+Historical. The Akash lease (DSEQ 27496807) was closed on 2026-08-13, so there is no
+host-level rollback; on runtime 119 there is no image rollback either (see above). The
+original note: while the lease was open, rollback was a DNS revert: drop the CNAME,
+restore `A 184.105.162.182`, TTL 60.
 
 ## Constraints worth knowing before editing the spec
 
