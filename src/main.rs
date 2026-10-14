@@ -76,7 +76,19 @@ async fn main() -> Result<()> {
         );
     }
     let funder = Funder::from_suri(&cfg.faucet_key).context("loading funder key")?;
-    info!("funder: {}", funder.account.to_ss58check());
+    // Say where the key came from: an unset variable silently falls back to the
+    // dev default, and this line is where an operator reads the faucet's account.
+    let key_source = if std::env::var_os("QUIP_FAUCET_FAUCET_KEY").is_some() {
+        "QUIP_FAUCET_FAUCET_KEY"
+    } else if cfg.faucet_key == "//Alice" {
+        "the built-in dev default //Alice; QUIP_FAUCET_FAUCET_KEY is not set"
+    } else {
+        "--faucet-key"
+    };
+    info!(
+        "funder: {} (key from {key_source})",
+        funder.account.to_ss58check()
+    );
 
     let chain = ChainClient::connect(
         cfg.node_urls.clone(),
@@ -248,7 +260,8 @@ async fn ensure_base_funded(
     }
     let target = cfg.base_topup_target();
     let topup = target.saturating_sub(balance);
-    let dest_account = base_account.to_ss58check();
+    // Same 0x-hex form as the /request records, so one search finds both.
+    let dest_account = format!("0x{}", hex::encode(base_account));
     info!("base wallet low ({balance} < {threshold}); authority-minting {topup} to reach {target}");
     // The mint record. Every authority mint gets one, success or not, with the
     // transaction hash when there is one, so a mint can be found and reconciled.
@@ -258,17 +271,30 @@ async fn ensure_base_funded(
     {
         Ok(hash) => hash,
         Err(err) => {
-            let outcome = match err.downcast_ref::<MintSubmitError>() {
+            let mint = err.downcast_ref::<MintSubmitError>();
+            let outcome = match mint {
                 Some(mint) if mint.is_ambiguous() => "mint_ambiguous",
-                _ => "mint_failed",
+                Some(_) => "mint_rejected",
+                // Failed before anything was submitted (controls, budget, chain context).
+                None => "mint_not_submitted",
             };
-            error!(
-                route = "base-topup",
-                dest_account = %dest_account,
-                amount_plancks = %topup,
-                outcome,
-                "faucet mint failed: {err:#}"
-            );
+            match mint.and_then(MintSubmitError::transaction) {
+                Some(transaction) => error!(
+                    route = "base-topup",
+                    dest_account = %dest_account,
+                    amount_plancks = %topup,
+                    extrinsic_hash = %format_hash(&transaction),
+                    outcome,
+                    "faucet mint failed: {err:#}"
+                ),
+                None => error!(
+                    route = "base-topup",
+                    dest_account = %dest_account,
+                    amount_plancks = %topup,
+                    outcome,
+                    "faucet mint failed: {err:#}"
+                ),
+            }
             return Err(err.context("topping up base wallet"));
         }
     };
