@@ -16,7 +16,10 @@ use quip_protocol_runtime::{
 };
 use quip_transaction_crypto::{account_id_from_public, HybridPair, HybridTxSignature};
 use serde_json::Value;
-use sp_core::{crypto::Ss58Codec, Pair as _};
+use sp_core::{
+    crypto::{SecretStringError, Ss58Codec},
+    Pair as _,
+};
 use sp_runtime::{generic::Era, traits::SaturatedConversion};
 
 const MAX_RPC_MESSAGE_SIZE: u32 = 64 * 1024 * 1024;
@@ -32,7 +35,20 @@ pub struct ChainContext {
 }
 
 pub fn pair_from_suri(suri: &str) -> Result<HybridPair> {
-    HybridPair::from_string(suri, None).map_err(|err| anyhow!("invalid signer SURI: {err:?}"))
+    // Never format the parse error itself: sp-core's InvalidFormat keeps a copy of
+    // the whole input, which is the secret, and this error can reach shipped logs.
+    HybridPair::from_string(suri, None).map_err(|err| {
+        let why = match err {
+            SecretStringError::InvalidFormat(_) => {
+                "unexpected character (quotes, a line break or a non-ASCII space?)"
+            }
+            SecretStringError::InvalidPhrase => "not a valid BIP-39 phrase",
+            SecretStringError::InvalidPassword => "invalid password",
+            SecretStringError::InvalidSeed | SecretStringError::InvalidSeedLength => "invalid seed",
+            SecretStringError::InvalidPath => "invalid derivation path",
+        };
+        anyhow!("invalid signer SURI: {why}")
+    })
 }
 
 pub fn signer_account(pair: &HybridPair) -> runtime::AccountId {
@@ -200,6 +216,28 @@ mod tests {
     use super::{build_signed_extrinsic, encode_extrinsic, pair_from_suri, ChainContext};
 
     #[test]
+    fn malformed_suri_errors_never_echo_the_secret() {
+        // The public Substrate dev phrase, mangled the ways a pasted key usually is.
+        let phrase = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
+        for bad in [
+            format!("\"{phrase}\""),
+            format!("{phrase}\n"),
+            format!("{phrase}\r\n"),
+            format!("<{phrase}>"),
+            phrase.replace(' ', "\u{a0}"),
+        ] {
+            let err = pair_from_suri(&bad)
+                .err()
+                .expect("a malformed SURI must be rejected");
+            for rendered in [format!("{err}"), format!("{err:#}"), format!("{err:?}")] {
+                for word in ["bottom", "curtain", "lonely", "walk"] {
+                    assert!(!rendered.contains(word), "secret leaked: {rendered}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn r2_hybrid_extrinsic_round_trips() {
         let pair = pair_from_suri("//Alice").expect("valid dev SURI");
         let call = RuntimeCall::System(frame_system::Call::<Runtime>::remark {
@@ -218,6 +256,16 @@ mod tests {
         let decoded = UncheckedExtrinsic::decode(&mut encoded.as_slice()).expect("R2 decode");
 
         assert_eq!(decoded.encode(), encoded);
+    }
+}
+
+/// The transaction an unknown-outcome mint is about. Attached as error context so
+/// it reads "mint transaction 0x…" in the message and can still be logged as a field.
+#[derive(Debug, Clone, Copy)]
+pub struct MintTransaction(pub Hash);
+impl std::fmt::Display for MintTransaction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "mint transaction {}", format_hash(&self.0))
     }
 }
 
@@ -256,11 +304,17 @@ impl MintSubmitError {
     /// reconcile exactly that extrinsic against chain history before restarting.
     fn with_transaction(self, transaction_hash: &Hash) -> Self {
         match self {
-            Self::Ambiguous(error) => Self::Ambiguous(error.context(format!(
-                "mint transaction {}",
-                format_hash(transaction_hash)
-            ))),
+            Self::Ambiguous(error) => {
+                Self::Ambiguous(error.context(MintTransaction(*transaction_hash)))
+            }
             rejected => rejected,
+        }
+    }
+    /// The submitted transaction, when the outcome is unknown.
+    pub fn transaction(&self) -> Option<Hash> {
+        match self {
+            Self::Ambiguous(error) => error.downcast_ref::<MintTransaction>().map(|tx| tx.0),
+            Self::Rejected { .. } => None,
         }
     }
     pub fn is_stale_nonce(&self) -> bool {
@@ -656,9 +710,11 @@ mod submission_classification_tests {
         let ambiguous = MintSubmitError::Ambiguous(anyhow!("timed out")).with_transaction(&hash);
         assert!(ambiguous.is_ambiguous());
         assert!(ambiguous.to_string().contains(&format_hash(&hash)));
+        assert_eq!(ambiguous.transaction(), Some(hash));
         let rejected = MintSubmitError::rejected(anyhow!("bad origin")).with_transaction(&hash);
         assert!(!rejected.is_ambiguous());
         assert!(!rejected.to_string().contains(&format_hash(&hash)));
+        assert_eq!(rejected.transaction(), None);
     }
     #[test]
     fn only_definite_nonce_rejections_are_retryable() {
