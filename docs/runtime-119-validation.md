@@ -1,7 +1,8 @@
 # Direct-authority mint validation
 
 Branch: `feat/runtime-119-direct-mint`, base `62e8a0f`.
-Runtime pin: `bea1395381cff989a66bbfd4e4ca06b3c09f937a`.
+Runtime pin: `bc4552a2cc6913bd057ecfdf9abc99197393b55c` (quip-validator v0.4.0),
+re-pinned from `bea1395381cff989a66bbfd4e4ca06b3c09f937a` on 2026-10-14.
 
 Implemented: direct signed FaucetOps.mint, finalized exact-extrinsic System and
 matching FaucetOps.Minted plus canonical EmissionController.FaucetMinted receipts,
@@ -28,6 +29,15 @@ Pinned-package evidence (2026-09-29):
 - Pinned-package metadata V16 export and byte-for-byte snapshot comparison pass
   locally; hash and reproduction command are in `metadata/README.md`. CI repeats
   this check.
+
+Release re-pin evidence (2026-10-14):
+
+- `bea1395` is no longer on any branch or tag, so the four direct dependencies
+  now pin the v0.4.0 release commit `bc4552a2`. SDK still resolves to `845eb998`.
+- With rustc 1.95.0: `cargo fmt --all -- --check`, `cargo clippy --locked
+  --all-targets -- -D warnings` and `cargo test --locked` (30 passed) pass.
+- The metadata snapshot was re-exported from the release pin and compares
+  byte for byte; its new hash is in `metadata/README.md`.
 
 Still required: published CI/MR checks, the release binary build and live smoke
 below. rr approved the code after H1/H2 fixes; the subsequent inclusion-history

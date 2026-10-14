@@ -4500,8 +4500,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-emission-controller"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4514,8 +4514,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-evm-chain-id"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -4525,8 +4525,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-faucet-ops"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4579,8 +4579,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-miner-registry"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4617,8 +4617,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-quantum-compute-mempool"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4628,13 +4628,14 @@ dependencies = [
  "quantum-validation",
  "scale-info",
  "sp-api",
+ "sp-core",
  "sp-runtime",
 ]
 
 [[package]]
 name = "pallet-quantum-pow"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "blake3",
  "frame-benchmarking",
@@ -4805,8 +4806,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-template"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4878,8 +4879,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-validator-admission"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -4892,8 +4893,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-xqvm"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5510,8 +5511,8 @@ dependencies = [
 
 [[package]]
 name = "quantum-validation"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "blake3",
  "libm",
@@ -5584,8 +5585,8 @@ dependencies = [
 
 [[package]]
 name = "quip-protocol-runtime"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "frame-benchmarking",
  "frame-election-provider-support",
@@ -5648,8 +5649,8 @@ dependencies = [
 
 [[package]]
 name = "quip-transaction-crypto"
-version = "0.3.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+version = "0.4.0"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "log",
  "parity-scale-codec",
@@ -5663,7 +5664,7 @@ dependencies = [
 [[package]]
 name = "quip-transaction-crypto-core"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bea1395381cff989a66bbfd4e4ca06b3c09f937a#bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?rev=bc4552a2cc6913bd057ecfdf9abc99197393b55c#bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 dependencies = [
  "bip39",
  "blake2",

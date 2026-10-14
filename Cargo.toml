@@ -13,25 +13,25 @@ path = "src/main.rs"
 # --- Quip runtime + H4 transaction stack (R2). ---
 [dependencies.quip-protocol-runtime]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+rev = "bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+rev = "bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+rev = "bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-emission-controller]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "bea1395381cff989a66bbfd4e4ca06b3c09f937a"
+rev = "bc4552a2cc6913bd057ecfdf9abc99197393b55c"
 default-features = false
 features = ["std"]
 
