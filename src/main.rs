@@ -29,13 +29,14 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use quip_protocol_runtime::AccountId;
 use quip_transaction_crypto::HybridPair;
 use sp_core::crypto::Ss58Codec;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::{
     filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
 use crate::{
     chain::ChainClient,
+    client::{format_hash, MintSubmitError},
     config::Config,
     gate::Gate,
     nonce::NonceLane,
@@ -313,11 +314,38 @@ async fn ensure_base_funded(
     }
     let target = cfg.base_topup_target();
     let topup = target.saturating_sub(balance);
+    let dest_account = base_account.to_ss58check();
     info!("base wallet low ({balance} < {threshold}); authority-minting {topup} to reach {target}");
-    chain
+    // The mint record. Every authority mint gets one, success or not, with the
+    // transaction hash when there is one, so a mint can be found and reconciled.
+    let hash = match chain
         .submit_funder(&funder.pair, &funder.account, base_account.clone(), topup)
         .await
-        .context("topping up base wallet")?;
+    {
+        Ok(hash) => hash,
+        Err(err) => {
+            let outcome = match err.downcast_ref::<MintSubmitError>() {
+                Some(mint) if mint.is_ambiguous() => "mint_ambiguous",
+                _ => "mint_failed",
+            };
+            error!(
+                route = "base-topup",
+                dest_account = %dest_account,
+                amount_plancks = %topup,
+                outcome,
+                "faucet mint failed: {err:#}"
+            );
+            return Err(err.context("topping up base wallet"));
+        }
+    };
+    info!(
+        route = "base-topup",
+        dest_account = %dest_account,
+        amount_plancks = %topup,
+        extrinsic_hash = %format_hash(&hash),
+        outcome = "minted",
+        "faucet minted"
+    );
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if chain.free_balance(base_account).await.unwrap_or(0) >= threshold {
