@@ -91,17 +91,21 @@ async fn main() -> Result<()> {
         .init();
     info!("{}", startup.notice);
 
-    // Every exit goes through here, so a failure at startup (wrong authority,
-    // unfunded key, runtime mismatch, unknown mint outcome, bad flag) is shipped
-    // too, not only printed to the console that Flux wipes on the next update.
+    // Every error return goes through here, so a failure at startup (wrong
+    // authority, unfunded key, runtime mismatch, unknown mint outcome, bad flag)
+    // is shipped too, not only printed to the console that Flux wipes on the next
+    // update. Not covered: a panic, and a SIGTERM before the server is up (the
+    // signal handler is installed with it), which end the process directly.
+    // ⚠ This record is shipped and archived for a year: no error that reaches it
+    // may carry a secret (see pair_from_suri, and the flag handling in run()).
     let result = run().await;
     if let Err(err) = &result {
         error!(outcome = "fatal", "faucet stopped: {err:#}");
     }
 
-    // Flush what is still queued, on every exit. Without this the records from
-    // the minutes before a redeploy or a crash, the ones most likely to explain
-    // it, are dropped.
+    // Flush what is still queued, on every error return and clean shutdown.
+    // Without this the records from the minutes before a redeploy, the ones
+    // most likely to explain it, are dropped.
     if let Some(telemetry) = &startup.telemetry {
         match telemetry.shutdown() {
             Ok(()) => info!("telemetry flushed"),
@@ -114,9 +118,18 @@ async fn main() -> Result<()> {
 async fn run() -> Result<()> {
     let cfg = match Config::try_parse() {
         Ok(cfg) => cfg,
-        // --help and --version print and exit normally.
+        // --help prints and exits normally.
         Err(err) if !err.use_stderr() => err.exit(),
-        Err(err) => anyhow::bail!("invalid configuration: {err}"),
+        Err(err) => {
+            // clap's message repeats the offending argument word for word, and
+            // that could be a key pasted into the wrong place. Print it to the
+            // console only; the shipped record names just the kind of error.
+            eprintln!("{err}");
+            anyhow::bail!(
+                "invalid configuration ({:?}); details on stderr",
+                err.kind()
+            );
+        }
     };
     if cfg.allow_any_chain {
         warn!(
