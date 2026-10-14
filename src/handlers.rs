@@ -19,8 +19,15 @@ pub struct FundRequest {
     pub amount: Option<u128>,
 }
 
-pub async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+pub async fn health(State(state): State<Arc<AppState>>) -> Reply {
+    if state.chain.is_ready() {
+        reply(StatusCode::OK, json!({ "status": "ok" }))
+    } else {
+        err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet authority, fuse, budget or runtime checks unavailable",
+        )
+    }
 }
 
 fn reply(status: StatusCode, body: Value) -> Reply {
@@ -58,12 +65,22 @@ fn parse_dest(dest: &str) -> Option<(AccountId, String)> {
     Some((account, key))
 }
 
-fn validate(req: &FundRequest, default_amount: u128) -> Result<(AccountId, String, u128), Reply> {
+fn validate(
+    req: &FundRequest,
+    default_amount: u128,
+    max_amount: u128,
+) -> Result<(AccountId, String, u128), Reply> {
     let amount = req.amount.unwrap_or(default_amount);
     if amount == 0 {
         return Err(err(
             StatusCode::BAD_REQUEST,
             "amount must be a positive integer (plancks)",
+        ));
+    }
+    if amount > max_amount {
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            &format!("amount exceeds the per-request maximum of {max_amount} plancks"),
         ));
     }
     let (account, key) = parse_dest(&req.dest).ok_or_else(|| {
@@ -149,7 +166,13 @@ fn map_gate(decision: &GateDecision, route: &str, dest_account: &str) -> Option<
 }
 
 pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundRequest>) -> Reply {
-    let (account, key, amount) = match validate(&req, state.cfg.amount) {
+    if !state.chain.is_ready() {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet unavailable; see operator logs",
+        );
+    }
+    let (account, key, amount) = match validate(&req, state.cfg.amount, state.cfg.max_amount()) {
         Ok(parsed) => parsed,
         Err(resp) => return resp,
     };
@@ -160,7 +183,7 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     }
 
     // Allowed + reserved. Transfer from the base wallet (its nonce lane lets these
-    // pipeline concurrently; sudo is only used to top the base wallet up).
+    // pipeline concurrently; the authority is only used to top the base wallet up).
     let call = calls::transfer_keep_alive(account, amount);
     let result = state
         .chain
@@ -213,7 +236,13 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
 }
 
 pub async fn sign(State(state): State<Arc<AppState>>, Json(req): Json<FundRequest>) -> Reply {
-    let (account, key, amount) = match validate(&req, state.cfg.amount) {
+    if !state.chain.is_ready() {
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "faucet unavailable; see operator logs",
+        );
+    }
+    let (account, key, amount) = match validate(&req, state.cfg.amount, state.cfg.max_amount()) {
         Ok(parsed) => parsed,
         Err(resp) => return resp,
     };
@@ -336,6 +365,25 @@ mod tests {
         let lower = parse_dest("0x7a718c27469499aae7c652c0d1a95bd14eca4cf9");
         let checksummed = parse_dest("0x7a718C27469499AaE7c652C0D1A95BD14eCa4CF9");
         assert_eq!(lower.map(|(_, key)| key), checksummed.map(|(_, key)| key));
+    }
+
+    fn fund(amount: Option<u128>) -> FundRequest {
+        FundRequest {
+            dest: format!("0x{}", hex::encode([1u8; 32])),
+            amount,
+        }
+    }
+
+    #[test]
+    fn validate_caps_amount() {
+        let over = validate(&fund(Some(11)), 10, 10).expect_err("over the cap");
+        assert_eq!(over.0, StatusCode::BAD_REQUEST);
+        assert!(over.1 .0["error"].as_str().unwrap().contains("10 plancks"));
+
+        assert_eq!(validate(&fund(Some(10)), 10, 10).unwrap().2, 10);
+        assert_eq!(validate(&fund(None), 10, 10).unwrap().2, 10);
+        // A raised --max-amount-plancks admits a larger request.
+        assert_eq!(validate(&fund(Some(50)), 10, 50).unwrap().2, 50);
     }
 
     #[test]

@@ -6,7 +6,7 @@ use quip_transaction_crypto::HybridPair;
 
 use crate::client::{pair_from_suri, signer_account};
 
-/// The funded sudo key the faucet signs/derives from.
+/// The funded authority key the faucet signs/derives from.
 pub struct Funder {
     pub pair: HybridPair,
     pub account: AccountId,
@@ -35,8 +35,8 @@ impl Funder {
     }
 
     /// Derive the dedicated base (hot) wallet, `<funder>//faucet//base`. It is
-    /// funded by sudo and used to transfer to users — its nonce is not contended,
-    /// so a nonce lane gives `/request` concurrency without touching the sudo key.
+    /// funded by the authority and used to transfer to users — its nonce is not contended,
+    /// so a nonce lane gives `/request` concurrency without touching the authority key.
     pub fn derive_base(&self) -> Result<(HybridPair, AccountId)> {
         let suri = format!("{}//faucet//base", self.suri);
         let pair = pair_from_suri(&suri)?;
