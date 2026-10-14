@@ -17,8 +17,9 @@ deployment in `../akash/` (kept for history), which cost ~$6.98/mo against ~$1.7
   QUI-831 fixed. The abuse gate is per-process in-memory for the same reason. Flux v8 allows
   1 instance; single-instance MTTR is 65–125 min with no failover, which is the trade we're
   making knowingly.
-- **Enterprise is required.** `QUIP_FAUCET_FAUCET_KEY` is op-1's mnemonic and op-1 is the
-  chain sudo key; a non-Enterprise v8 spec is publicly readable. Enterprise encrypts the spec
+- **Enterprise is required.** `QUIP_FAUCET_FAUCET_KEY` is the faucet authority's mnemonic
+  (F on runtime 119; op-1, the chain sudo key, before it); a non-Enterprise v8 spec is
+  publicly readable. Enterprise encrypts the spec
   and restricts placement to ArcaneOS nodes. Its flat +$4.00 dominates the bill, so RAM
   headroom is nearly free — hence 2048 MB for a service that ran in 512 MB on Akash.
 - **No caddy, no certifier, no Tarsnap.** FDM issues and auto-renews Let's Encrypt for the
@@ -60,7 +61,7 @@ deployment in `../akash/` (kept for history), which cost ~$6.98/mo against ~$1.7
 
    Confirm the quote first. The endpoint is POST-only and needs `expire` and `contacts`
    present. **Send the template, never `faucet.filled.json`** — price does not depend on env
-   values and the filled copy carries the sudo mnemonic.
+   values and the filled copy carries the faucet authority's mnemonic.
 
    ```bash
    python3 -c "
@@ -180,6 +181,35 @@ eth_getBalance returned  = 10999000000000000000 wei  ✓
 
 So confirm the drip against `System.Account` for `dest_account` if you want the exact figure,
 and treat a nonzero `eth_getBalance` as the proof that Ethereum tooling can see the funds.
+
+## Runtime 119 (the spec-119 relaunch)
+
+The 119 faucet mints with `FaucetOps.mint`, signed by the FaucetOps authority the Foundation
+appoints with a 2-of-3 `setAuthority` motion. Sudo no longer mints. At genesis the authority
+is op-1, which is also sudo, so the faucet must run on its own key F:
+
+1. Get F's account from the binary itself: start it with F's mnemonic and an unreachable
+   `--node-url`, and read the `funder: <ss58>` line. H4 hybrid accounts differ from what other
+   tools derive from the same mnemonic.
+2. Fund F, pass `setAuthority(F)`, and wait until that block is **finalized**. The startup
+   checks read the finalized head; any earlier and the faucet crash-loops on
+   `configured funder is not FaucetOps.Authority`.
+3. Update `quipfaucet` with the new repotag and F's mnemonic in **one** Soft Reinstall.
+
+Expect `funder: <F>`, `base wallet: …`, then on first boot `base wallet low (0 < …);
+authority-minting …` followed by `faucet minted` (an `outcome=minted` record with the
+extrinsic hash), `pool ready: 8 accounts`, `faucet listening …` and `telemetry enabled …`.
+The `funder confirmed as chain sudo key` line no longer exists. If startup fails, the reason
+is shipped as an `outcome=fatal` record, not only printed to the console.
+
+The spec sets `--max-amount-plancks=11000000000000`: the per-request cap defaults to one
+dispense (10 AGLS), and the 11 AGLS drips below and in `quip-testnet-health` must get
+through it.
+
+There is **no rollback image on 119**: every earlier image mints through
+`Sudo::sudo(FaucetOps.mint)`, which runtime 119 rejects. Every later runtime upgrade needs a
+rebuilt faucet deployed with it, because the exact 119/7 runtime check answers 503 from the
+upgrade block until the new image is live.
 
 ## Rollback
 
