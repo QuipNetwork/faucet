@@ -91,7 +91,33 @@ async fn main() -> Result<()> {
         .init();
     info!("{}", startup.notice);
 
-    let cfg = Config::parse();
+    // Every exit goes through here, so a failure at startup (wrong authority,
+    // unfunded key, runtime mismatch, unknown mint outcome, bad flag) is shipped
+    // too, not only printed to the console that Flux wipes on the next update.
+    let result = run().await;
+    if let Err(err) = &result {
+        error!(outcome = "fatal", "faucet stopped: {err:#}");
+    }
+
+    // Flush what is still queued, on every exit. Without this the records from
+    // the minutes before a redeploy or a crash, the ones most likely to explain
+    // it, are dropped.
+    if let Some(telemetry) = &startup.telemetry {
+        match telemetry.shutdown() {
+            Ok(()) => info!("telemetry flushed"),
+            Err(err) => warn!("telemetry shutdown failed: {err}"),
+        }
+    }
+    result
+}
+
+async fn run() -> Result<()> {
+    let cfg = match Config::try_parse() {
+        Ok(cfg) => cfg,
+        // --help and --version print and exit normally.
+        Err(err) if !err.use_stderr() => err.exit(),
+        Err(err) => anyhow::bail!("invalid configuration: {err}"),
+    };
     if cfg.allow_any_chain {
         warn!(
             "allow-any-chain set: dev-chain guard disabled; unsafe outside controlled environments"
@@ -165,16 +191,6 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving")?;
-
-    // Flush what is still queued. Without this the records from the minutes
-    // before a redeploy — the ones most likely to explain it — are dropped, and
-    // a redeploy is the single most common way this process ends.
-    if let Some(telemetry) = &startup.telemetry {
-        match telemetry.shutdown() {
-            Ok(()) => info!("telemetry flushed"),
-            Err(err) => warn!("telemetry shutdown failed: {err}"),
-        }
-    }
     Ok(())
 }
 
