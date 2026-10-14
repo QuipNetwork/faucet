@@ -252,6 +252,17 @@ impl MintSubmitError {
     pub fn is_ambiguous(&self) -> bool {
         matches!(self, Self::Ambiguous(_))
     }
+    /// Name the submitted transaction on an unknown outcome, so the operator can
+    /// reconcile exactly that extrinsic against chain history before restarting.
+    fn with_transaction(self, transaction_hash: &Hash) -> Self {
+        match self {
+            Self::Ambiguous(error) => Self::Ambiguous(error.context(format!(
+                "mint transaction {}",
+                format_hash(transaction_hash)
+            ))),
+            rejected => rejected,
+        }
+    }
     pub fn is_stale_nonce(&self) -> bool {
         matches!(
             self,
@@ -346,6 +357,7 @@ pub async fn submit_mint_extrinsic(
         )))
     })
     .await
+    .map_err(|error| error.with_transaction(&transaction_hash))
 }
 
 async fn finalized_mint_receipt(
@@ -637,6 +649,16 @@ mod submission_classification_tests {
         submission_error(Error::Call(ErrorObjectOwned::owned(
             code, message, None::<()>,
         )))
+    }
+    #[test]
+    fn unknown_mint_outcome_names_the_transaction() {
+        let hash = Hash::repeat_byte(0xab);
+        let ambiguous = MintSubmitError::Ambiguous(anyhow!("timed out")).with_transaction(&hash);
+        assert!(ambiguous.is_ambiguous());
+        assert!(ambiguous.to_string().contains(&format_hash(&hash)));
+        let rejected = MintSubmitError::rejected(anyhow!("bad origin")).with_transaction(&hash);
+        assert!(!rejected.is_ambiguous());
+        assert!(!rejected.to_string().contains(&format_hash(&hash)));
     }
     #[test]
     fn only_definite_nonce_rejections_are_retryable() {
