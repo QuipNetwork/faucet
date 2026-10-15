@@ -1,7 +1,8 @@
 //! OTLP log export to OneUptime (QUI-1225).
 //!
-//! The faucet's `tracing` records are the only record that the chain's sudo key
-//! was used to mint anything. Today they exist solely as Flux console output,
+//! The faucet's `tracing` records are the only record that its minting key (the
+//! FaucetOps authority on runtime 119; before it, the chain's sudo key) was used
+//! to mint anything. Today they exist solely as Flux console output,
 //! which is wiped on every update — not just on relocation — and cannot be
 //! backfilled. This ships them to `observe.quip.network` as OTLP logs while
 //! leaving the existing stdout stream exactly as it was.

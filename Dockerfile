@@ -51,7 +51,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # The Flux spec therefore carries exactly ONE new variable, the secret:
 #   ONEUPTIME_TELEMETRY_KEY=<Telemetry Ingestion Key UUID>
 # which is safe here because quipfaucet is already Enterprise — it has to be, as
-# QUIP_FAUCET_FAUCET_KEY is the chain sudo key. On a non-Enterprise app the Flux
+# QUIP_FAUCET_FAUCET_KEY is the faucet authority's mnemonic (F on runtime 119;
+# before it, op-1, the chain sudo key). On a non-Enterprise app the Flux
 # public API serves environmentParameters in the clear.
 #
 # Both are inert on their own: the faucet ships nothing unless the endpoint AND

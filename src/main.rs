@@ -2,13 +2,14 @@
 //!
 //! tokio + jsonrpsee (multiplexed RPC, no global lock), reusing the Quip
 //! runtime/crypto/client crates so the wire format never drifts. A dedicated base
-//! wallet (sudo-topped-up) funds /request and the pool via a nonce lane, so only
-//! rare top-ups touch the shared, contended sudo key.
+//! wallet (authority-topped-up) funds /request and the pool via a nonce lane, so only
+//! rare top-ups touch the shared, contended authority key.
 
 mod calls;
 mod chain;
 mod client;
 mod config;
+mod faucet_state;
 mod gate;
 mod handlers;
 mod nonce;
@@ -18,7 +19,7 @@ mod telemetry;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use axum::{
     routing::{get, post},
     Router,
@@ -28,13 +29,14 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use quip_protocol_runtime::AccountId;
 use quip_transaction_crypto::HybridPair;
 use sp_core::crypto::Ss58Codec;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::{
     filter::filter_fn, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
 };
 
 use crate::{
     chain::ChainClient,
+    client::{format_hash, MintSubmitError},
     config::Config,
     gate::Gate,
     nonce::NonceLane,
@@ -46,8 +48,8 @@ use crate::{
 /// runtime version; pool accounts must stay above it for `transfer_keep_alive`.
 const EXISTENTIAL_DEPOSIT_PLANCKS: u128 = 1_000_000_000;
 
-/// Dedicated hot wallet that funds users; sudo-topped-up, with a faucet-only nonce
-/// lane so `/request` and pool funding pipeline without touching the sudo key.
+/// Dedicated hot wallet that funds users; authority-topped-up, with a faucet-only nonce
+/// lane so `/request` and pool funding pipeline without touching the authority key.
 pub struct BaseWallet {
     pub pair: HybridPair,
     pub account: AccountId,
@@ -89,14 +91,65 @@ async fn main() -> Result<()> {
         .init();
     info!("{}", startup.notice);
 
-    let cfg = Config::parse();
+    // Every error return goes through here, so a failure at startup (wrong
+    // authority, unfunded key, runtime mismatch, unknown mint outcome, bad flag)
+    // is shipped too, not only printed to the console that Flux wipes on the next
+    // update. Not covered: a panic, and a SIGTERM before the server is up (the
+    // signal handler is installed with it), which end the process directly.
+    // ⚠ This record is shipped and archived for a year: no error that reaches it
+    // may carry a secret (see pair_from_suri, and the flag handling in run()).
+    let result = run().await;
+    if let Err(err) = &result {
+        error!(outcome = "fatal", "faucet stopped: {err:#}");
+    }
+
+    // Flush what is still queued, on every error return and clean shutdown.
+    // Without this the records from the minutes before a redeploy, the ones
+    // most likely to explain it, are dropped.
+    if let Some(telemetry) = &startup.telemetry {
+        match telemetry.shutdown() {
+            Ok(()) => info!("telemetry flushed"),
+            Err(err) => warn!("telemetry shutdown failed: {err}"),
+        }
+    }
+    result
+}
+
+async fn run() -> Result<()> {
+    let cfg = match Config::try_parse() {
+        Ok(cfg) => cfg,
+        // --help prints and exits normally.
+        Err(err) if !err.use_stderr() => err.exit(),
+        Err(err) => {
+            // clap's message repeats the offending argument word for word, and
+            // that could be a key pasted into the wrong place. Print it to the
+            // console only; the shipped record names just the kind of error.
+            eprintln!("{err}");
+            anyhow::bail!(
+                "invalid configuration ({:?}); details on stderr",
+                err.kind()
+            );
+        }
+    };
     if cfg.allow_any_chain {
         warn!(
             "allow-any-chain set: dev-chain guard disabled; unsafe outside controlled environments"
         );
     }
     let funder = Funder::from_suri(&cfg.faucet_key).context("loading funder key")?;
-    info!("funder: {}", funder.account.to_ss58check());
+    // Say where the key came from: an unset variable silently falls back to the
+    // dev default, and this line is where an operator reads the faucet's account.
+    let key_source = if std::env::var_os("QUIP_FAUCET_FAUCET_KEY").is_some() {
+        "QUIP_FAUCET_FAUCET_KEY"
+    } else if cfg.faucet_key == "//Alice" {
+        "the built-in dev default //Alice; QUIP_FAUCET_FAUCET_KEY is not set"
+    } else {
+        "--faucet-key"
+    };
+    info!(
+        "funder: {} (key from {key_source})",
+        funder.account.to_ss58check()
+    );
 
     let chain = ChainClient::connect(
         cfg.node_urls.clone(),
@@ -106,9 +159,9 @@ async fn main() -> Result<()> {
     .await?;
 
     // Verify the funder can actually mint before we touch anything on chain.
-    ensure_funder_is_sudo(&chain, &funder).await?;
+    chain.ensure_faucet_ready().await?;
 
-    // Dedicated base wallet: sudo-topped-up, funds /request + pool via a nonce lane.
+    // Dedicated base wallet: authority-topped-up, funds /request + pool via a nonce lane.
     let (base_pair, base_account) = funder.derive_base()?;
     info!("base wallet: {}", base_account.to_ss58check());
     ensure_base_funded(&chain, &funder, &base_account, &cfg).await?;
@@ -136,8 +189,11 @@ async fn main() -> Result<()> {
         pool,
     });
 
-    init_pool(&state).await?;
+    // Keep the cached controls fresh while the pool is funded, and re-check once
+    // now: the startup top-up waits for finality, which outlives READINESS_TTL.
     spawn_refresh(Arc::clone(&state));
+    state.chain.ensure_faucet_ready().await?;
+    init_pool(&state).await?;
     spawn_replenish(Arc::clone(&state));
     spawn_base_monitor(Arc::clone(&state));
     spawn_base_nonce_reconcile(Arc::clone(&state));
@@ -160,16 +216,6 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serving")?;
-
-    // Flush what is still queued. Without this the records from the minutes
-    // before a redeploy — the ones most likely to explain it — are dropped, and
-    // a redeploy is the single most common way this process ends.
-    if let Some(telemetry) = &startup.telemetry {
-        match telemetry.shutdown() {
-            Ok(()) => info!("telemetry flushed"),
-            Err(err) => warn!("telemetry shutdown failed: {err}"),
-        }
-    }
     Ok(())
 }
 
@@ -293,35 +339,9 @@ async fn fund_account(state: &Arc<AppState>, account: &AccountId) -> Result<()> 
     Ok(())
 }
 
-/// Fail fast if the funder is not the chain's sudo key. Every dispense flows
-/// through `Sudo::sudo(FaucetOps::mint)` (to top up the base wallet, which then
-/// transfers to users), and the runtime authorizes that only for `Sudo::Key`. A
-/// wrong key makes the node accept each extrinsic into its pool and then drop it,
-/// so `/request` returns `200` yet nothing ever lands — the silent failure this
-/// guards against. Crashing at startup makes the misconfiguration loud instead.
-async fn ensure_funder_is_sudo(chain: &ChainClient, funder: &Funder) -> Result<()> {
-    match chain.sudo_key().await.context("reading chain Sudo.Key")? {
-        Some(key) if key == funder.account => {
-            info!("funder confirmed as chain sudo key");
-            Ok(())
-        }
-        Some(key) => bail!(
-            "funder {} is NOT the chain sudo key (Sudo.Key = {}); every mint would be \
-             accepted into the tx pool then dropped. Set --faucet-key / \
-             QUIP_FAUCET_FAUCET_KEY to the sudo account.",
-            funder.account.to_ss58check(),
-            key.to_ss58check(),
-        ),
-        None => bail!(
-            "chain reports no Sudo.Key; this faucet mints via Sudo::sudo and cannot operate \
-             against it. Verify the --node-url target."
-        ),
-    }
-}
-
 /// Ensure the base wallet has runway: if its balance is below the top-up threshold
-/// (cold start or drained), sudo-mint up to the target. Reused at startup and by
-/// the background monitor — the only place the contended sudo key is used.
+/// (cold start or drained), authority-mint up to the target. Reused at startup and by
+/// the background monitor — the only place the contended authority key is used.
 async fn ensure_base_funded(
     chain: &ChainClient,
     funder: &Funder,
@@ -335,20 +355,59 @@ async fn ensure_base_funded(
     }
     let target = cfg.base_topup_target();
     let topup = target.saturating_sub(balance);
-    info!("base wallet low ({balance} < {threshold}); sudo-minting {topup} to reach {target}");
-    let call = calls::sudo_mint(base_account.clone(), topup);
-    chain
-        .submit_funder(&funder.pair, &funder.account, call)
+    // Same 0x-hex form as the /request records, so one search finds both.
+    let dest_account = format!("0x{}", hex::encode(base_account));
+    info!("base wallet low ({balance} < {threshold}); authority-minting {topup} to reach {target}");
+    // The mint record. Every authority mint gets one, success or not, with the
+    // transaction hash when there is one, so a mint can be found and reconciled.
+    let hash = match chain
+        .submit_funder(&funder.pair, &funder.account, base_account.clone(), topup)
         .await
-        .context("topping up base wallet")?;
+    {
+        Ok(hash) => hash,
+        Err(err) => {
+            let mint = err.downcast_ref::<MintSubmitError>();
+            let outcome = match mint {
+                Some(mint) if mint.is_ambiguous() => "mint_ambiguous",
+                Some(_) => "mint_rejected",
+                // Failed before anything was submitted (controls, budget, chain context).
+                None => "mint_not_submitted",
+            };
+            match mint.and_then(MintSubmitError::transaction) {
+                Some(transaction) => error!(
+                    route = "base-topup",
+                    dest_account = %dest_account,
+                    amount_plancks = %topup,
+                    extrinsic_hash = %format_hash(&transaction),
+                    outcome,
+                    "faucet mint failed: {err:#}"
+                ),
+                None => error!(
+                    route = "base-topup",
+                    dest_account = %dest_account,
+                    amount_plancks = %topup,
+                    outcome,
+                    "faucet mint failed: {err:#}"
+                ),
+            }
+            return Err(err.context("topping up base wallet"));
+        }
+    };
+    info!(
+        route = "base-topup",
+        dest_account = %dest_account,
+        amount_plancks = %topup,
+        extrinsic_hash = %format_hash(&hash),
+        outcome = "minted",
+        "faucet minted"
+    );
     for _ in 0..30 {
         tokio::time::sleep(Duration::from_secs(1)).await;
         if chain.free_balance(base_account).await.unwrap_or(0) >= threshold {
             return Ok(());
         }
     }
-    warn!("base top-up not confirmed in 30s");
-    Ok(())
+    anyhow::bail!("base top-up finalized but balance remained below threshold for 30s")
 }
 
 fn spawn_base_monitor(state: Arc<AppState>) {
