@@ -4,16 +4,10 @@
 use quip_protocol_runtime::{AccountId, Runtime, RuntimeCall};
 use sp_runtime::MultiAddress;
 
-/// `FaucetOps::mint(who, amount)` — root-only; wrap in [`sudo`].
-fn mint(who: AccountId, amount: u128) -> RuntimeCall {
+/// `FaucetOps::mint(who, amount)` — signed directly by the funder, which must be
+/// the `FaucetOps.Authority` account while the faucet is `Enabled`.
+pub fn mint(who: AccountId, amount: u128) -> RuntimeCall {
     RuntimeCall::FaucetOps(pallet_faucet_ops::Call::<Runtime>::mint { who, amount })
-}
-
-/// `Sudo::sudo(FaucetOps::mint(...))` — the funder is the chain sudo key.
-pub fn sudo_mint(who: AccountId, amount: u128) -> RuntimeCall {
-    RuntimeCall::Sudo(pallet_sudo::Call::<Runtime>::sudo {
-        call: Box::new(mint(who, amount)),
-    })
 }
 
 /// `Balances::transfer_keep_alive(dest, value)` — signed by a pool account; keeps

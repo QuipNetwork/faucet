@@ -22,6 +22,7 @@ use jsonrpsee::{
     core::{client::ClientT, rpc_params},
     ws_client::WsClient,
 };
+use pallet_faucet_ops::FaucetState;
 use parking_lot::RwLock;
 use quip_protocol_runtime::{AccountId, Hash, RuntimeCall};
 use quip_transaction_crypto::HybridPair;
@@ -111,8 +112,8 @@ impl ChainClient {
         Ok(())
     }
 
-    /// Submit a sudo/funder extrinsic, fetching the funder nonce fresh each try and
-    /// retrying on a stale-nonce rejection. The funder (chain sudo key) may be a
+    /// Submit a funder extrinsic, fetching the funder nonce fresh each try and
+    /// retrying on a stale-nonce rejection. The funder (the FaucetOps authority) may be a
     /// shared, active account, so a cached/lane nonce goes stale — fetch-fresh +
     /// retry is the correct model. Fire-and-forget (`author_submitExtrinsic`);
     /// not failed over (resubmitting a possibly-landed tx could double-fund).
@@ -327,12 +328,37 @@ impl ChainClient {
         bail!("free_balance retry exhausted")
     }
 
-    /// The chain's current `Sudo.Key` (the only origin allowed to dispatch the
-    /// root-only `FaucetOps.mint`), or `None` if sudo is unset. Idempotent →
-    /// fails over once on a transport error.
-    pub async fn sudo_key(&self) -> Result<Option<AccountId>> {
-        let mut storage_key = twox_128(b"Sudo").to_vec();
-        storage_key.extend(twox_128(b"Key")); // plain StorageValue: no key hashing
+    /// The chain's current `FaucetOps.Authority` (the signed account allowed to
+    /// dispatch `FaucetOps.mint`), or `None` if no authority is set.
+    pub async fn faucet_authority(&self) -> Result<Option<AccountId>> {
+        self.read_plain_storage_value(b"FaucetOps", b"Authority")
+            .await
+    }
+
+    /// The chain's current `FaucetOps.State`. The pallet declares it with
+    /// `ValueQuery`, so an unset value reads as the default, `PermanentlyDisabled`.
+    pub async fn faucet_state(&self) -> Result<FaucetState> {
+        Ok(self
+            .read_plain_storage_value(b"FaucetOps", b"State")
+            .await?
+            .unwrap_or_default())
+    }
+
+    /// Read a plain `StorageValue` (key = twox_128(pallet) ++ twox_128(item), no
+    /// key hashing) and SCALE-decode it. Idempotent → fails over once on a
+    /// transport error.
+    async fn read_plain_storage_value<T: Decode>(
+        &self,
+        pallet: &[u8],
+        item: &[u8],
+    ) -> Result<Option<T>> {
+        let name = format!(
+            "{}.{}",
+            String::from_utf8_lossy(pallet),
+            String::from_utf8_lossy(item)
+        );
+        let mut storage_key = twox_128(pallet).to_vec();
+        storage_key.extend(twox_128(item));
         let storage_key = format!("0x{}", hex::encode(storage_key));
         for attempt in 0..2 {
             let client = self.client();
@@ -343,20 +369,21 @@ impl ChainClient {
                 Ok(None) => return Ok(None),
                 Ok(Some(encoded)) => {
                     let stripped = encoded.strip_prefix("0x").unwrap_or(&encoded);
-                    let bytes = hex::decode(stripped).context("decoding Sudo.Key storage")?;
-                    let account = AccountId::decode(&mut bytes.as_slice())
-                        .context("decoding Sudo.Key AccountId")?;
-                    return Ok(Some(account));
+                    let bytes = hex::decode(stripped)
+                        .with_context(|| format!("decoding {name} storage"))?;
+                    let value = T::decode(&mut bytes.as_slice())
+                        .with_context(|| format!("decoding {name} value"))?;
+                    return Ok(Some(value));
                 }
                 Err(err) => {
                     if attempt == 1 {
-                        return Err(err).context("querying Sudo.Key");
+                        return Err(err).with_context(|| format!("querying {name}"));
                     }
                     self.reconnect().await?;
                 }
             }
         }
-        bail!("sudo_key retry exhausted")
+        bail!("{name} read retry exhausted")
     }
 
     /// The chain's next nonce for `account` (seeds nonce lanes / resync on drift).

@@ -44,10 +44,10 @@ No build step — the deploy uses the upstream `registry.gitlab.com/quip.network
 
 ## Funder key
 
-`QUIP_FAUCET_FAUCET_KEY` is op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid account from it directly — no derivation step. op-1 is the chain sudo key, so the faucet sudo-mints a dedicated base wallet on boot (and tops it up via `Sudo.sudo(FaucetOps.mint)`). A `0x` + 64-hex seed also works in that field. After deploy, confirm the funder identity in the faucet log:
+`QUIP_FAUCET_FAUCET_KEY` is op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid account from it directly — no derivation step. op-1 is the `FaucetOps` authority, so the faucet mints a dedicated base wallet on boot (and tops it up with a signed `FaucetOps.mint`). The Foundation must first call `FaucetOps::set_authority` for op-1 and enable the faucet; otherwise the faucet exits at startup. A `0x` + 64-hex seed also works in that field. After deploy, confirm the funder identity in the faucet log:
 
 ```
-funder: <ss58>        # must equal op-1's known sudo address
+funder: <ss58>        # must equal op-1's known authority address
 base wallet: <ss58>
 pool ready: N accounts
 ```
@@ -114,4 +114,4 @@ curl -i -X POST -H 'content-type: application/json' \
 - **Akash credentials block**: don't add `credentials:` with placeholder strings — the provider 401s and does NOT fall back to anonymous (memory: `akash_credentials_no_anonymous_fallback`). Both images are public; omit the block entirely.
 - **No persistent storage in this SDL** — we tried `beta2` first and got zero bids; reverted to ephemeral `/certs` so the deploy is schedulable. Cert persistence is Tarsnap-backed (see above), not Akash volumes.
 - **Cert-not-revoked assumption**: if the v1 certifier token for `faucet.testnet.quip.network` was revoked during v1 teardown, this deploy can't issue. Mint a fresh token via certifier admin before submitting.
-- **First boot mints a lot**: the faucet sudo-mints its base wallet to its target runway and funds the pool on first boot. That's expected — op-1 is sudo on testnet. Watch the startup log for `base wallet low … sudo-minting …` and `pool ready`.
+- **First boot mints a lot**: the faucet mints its base wallet to its target runway and funds the pool on first boot. That's expected — op-1 is the FaucetOps authority on testnet. Watch the startup log for `base wallet low … minting …` and `pool ready`.

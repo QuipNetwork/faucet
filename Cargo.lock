@@ -4842,21 +4842,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pallet-sudo"
-version = "46.0.0"
-source = "git+https://github.com/QuipNetwork/polkadot-sdk.git?tag=v0.3.1#d511a17da276c0958047c84b6d30ae599542edef"
-dependencies = [
- "docify",
- "frame-benchmarking",
- "frame-support",
- "frame-system",
- "parity-scale-codec",
- "scale-info",
- "sp-io",
- "sp-runtime",
-]
-
-[[package]]
 name = "pallet-template"
 version = "0.4.1"
 source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.4.1#cb09fe643630adbc503e3f5255353c098aae52e6"
@@ -5634,7 +5619,6 @@ dependencies = [
  "jsonrpsee",
  "pallet-balances",
  "pallet-faucet-ops",
- "pallet-sudo",
  "parity-scale-codec",
  "parking_lot",
  "quip-protocol-runtime",

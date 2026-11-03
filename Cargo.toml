@@ -41,11 +41,6 @@ git = "https://github.com/QuipNetwork/polkadot-sdk.git"
 tag = "v0.3.1"
 features = ["std"]
 
-[dependencies.pallet-sudo]
-git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-tag = "v0.3.1"
-features = ["std"]
-
 [dependencies.sp-core]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
 tag = "v0.3.1"

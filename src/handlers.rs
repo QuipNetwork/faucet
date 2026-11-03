@@ -121,7 +121,7 @@ pub async fn request(State(state): State<Arc<AppState>>, Json(req): Json<FundReq
     }
 
     // Allowed + reserved. Transfer from the base wallet (its nonce lane lets these
-    // pipeline concurrently; sudo is only used to top the base wallet up).
+    // pipeline concurrently; the funder key is only used to top the base wallet up).
     let call = calls::transfer_keep_alive(account, amount);
     let result = state
         .chain
