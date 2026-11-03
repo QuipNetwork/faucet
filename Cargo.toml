@@ -13,19 +13,19 @@ path = "src/main.rs"
 # --- Quip runtime + H4 transaction stack (R2). ---
 [dependencies.quip-protocol-runtime]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+tag = "v0.4.1"
 default-features = false
 features = ["std"]
 
 [dependencies.quip-transaction-crypto]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+tag = "v0.4.1"
 default-features = false
 features = ["std"]
 
 [dependencies.pallet-faucet-ops]
 git = "ssh://git@gitlab.com/quip.network/quip-validator.git"
-rev = "48383a91449e13522b223727e47d1ae7b5603dc4"
+tag = "v0.4.1"
 default-features = false
 features = ["std"]
 
@@ -33,27 +33,27 @@ features = ["std"]
 # so cargo unifies every substrate crate to one commit (no duplicate-type hell). ---
 [dependencies.frame-system]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+tag = "v0.3.1"
 features = ["std"]
 
 [dependencies.pallet-balances]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+tag = "v0.3.1"
 features = ["std"]
 
 [dependencies.pallet-sudo]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+tag = "v0.3.1"
 features = ["std"]
 
 [dependencies.sp-core]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+tag = "v0.3.1"
 features = ["std", "serde"]
 
 [dependencies.sp-runtime]
 git = "https://github.com/QuipNetwork/polkadot-sdk.git"
-rev = "30810786a6610de8798594bbc5d4f00670744c6d"
+tag = "v0.3.1"
 features = ["std", "serde"]
 
 [dependencies]

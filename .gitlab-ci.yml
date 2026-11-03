@@ -33,6 +33,11 @@
 # into a manifest list, so the single :latest tag serves both — see the
 # ci-image-toolchain* jobs in quip-validator/.gitlab-ci.yml.
 
+include:
+  - project: quip.network/ci-templates
+    ref: v1.1.4
+    file: templates/dependency-gate.yml
+
 stages:
   - test
   - build
@@ -219,6 +224,8 @@ publish-image-amd64:
   extends: .publish-image
   tags: [docker, amd64]
   needs:
+    - job: dependency-gate
+      optional: true
     - build-binary-amd64
   variables:
     ARCH: amd64
@@ -229,6 +236,8 @@ publish-image-arm64:
   extends: .publish-image
   tags: [docker, arm64]
   needs:
+    - job: dependency-gate
+      optional: true
     - build-binary-arm64
   variables:
     ARCH: arm64
@@ -244,6 +253,8 @@ publish-image-arm64:
 manifest:
   stage: manifest
   needs:
+    - job: dependency-gate
+      optional: true
     - publish-image-amd64
     - publish-image-arm64
   image:
