@@ -2,8 +2,8 @@
 
 Standalone dev faucet for [Quip Network](https://gitlab.com/quip.network)
 substrate chains. Listens on HTTP and submits
-`Sudo.sudo(FaucetOps.mint)` extrinsics from a single funded account
-(typically `//Alice` on a dev chain) to whichever destination is
+signed `FaucetOps.mint` extrinsics from a single funded account
+(the `FaucetOps` authority) to whichever destination is
 requested. Per-destination rate-limited.
 
 A concurrent Rust binary (`src/`, `quip-faucet`) built on tokio + jsonrpsee
@@ -11,9 +11,9 @@ A concurrent Rust binary (`src/`, `quip-faucet`) built on tokio + jsonrpsee
 mints pipeline concurrently instead of serializing one transaction per block. It
 reuses the Quip runtime, crypto, and client crates (`quip-protocol-runtime`,
 `quip-transaction-crypto`, `quip-tools`) so the extrinsic wire format can never
-drift from the chain. Each request mints through the root-only `FaucetOps` pallet
-wrapped in `Sudo.sudo(...)`, so the configured faucet key must be the chain's
-sudo/dev key.
+drift from the chain. Each request mints through the `FaucetOps` pallet, signed by
+the configured faucet key, so that key must be the chain's `FaucetOps`
+authority and the faucet must be enabled.
 
 Used by [`nodes.quip.network`](https://gitlab.com/quip.network/nodes.quip.network)
 as the `faucet` profile in its docker-compose stack.
@@ -22,10 +22,13 @@ as the `faucet` profile in its docker-compose stack.
 > bind unless the connected chain reports a known dev name. See the
 > `--allow-any-chain` flag below for the (deliberate) override.
 
-> **Funder must be the chain sudo key.** The faucet mints via
-> `Sudo.sudo(FaucetOps.mint)`, which the runtime authorizes only for
-> `Sudo::Key`. At startup it reads the chain's `Sudo.Key` and **exits with an
-> error if the funder doesn't match** — otherwise every mint would be accepted
+> **Funder must be the chain's FaucetOps authority.** The faucet mints with a
+> signed `FaucetOps.mint`, which the runtime authorizes only for the
+> `FaucetOps.Authority` account, and only while the faucet state is `Enabled`.
+> The Foundation sets the authority with `FaucetOps::set_authority(<funder>)`
+> and enables the faucet. At startup the faucet reads `FaucetOps.Authority`
+> and `FaucetOps.State` and **exits with an error if the funder does not match
+> or the faucet is not enabled** — otherwise every mint would be accepted
 > into the tx pool and silently dropped, so `/request` would return `200` yet
 > never fund anything. `--pool-size 0` disables the `/sign` pool (it returns
 > `503`); `/request` is unaffected.
@@ -190,7 +193,7 @@ matches the chain, with no hardcoded dev-seed table.
 The H3-to-H4 migration preserves SURI and mnemonic formats, but the new suite
 derives different hybrid public keys and therefore different funder, base, and
 pool account IDs from the same secret. Run this faucet against an R2 chain whose
-`Sudo.Key` was initialized for H4; the startup sudo-key check fails fast if the
+`FaucetOps.Authority` was set for H4; the startup authority check fails fast if the
 configured key belongs to the old account domain.
 
 ## Build, test & CI

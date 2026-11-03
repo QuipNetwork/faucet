@@ -5,7 +5,7 @@
 #
 # Two services in one deployment:
 #   - faucet: upstream Rust quip-faucet. Funder is op-1's hybrid account
-#     (the chain sudo key); on boot it sudo-mints a dedicated base wallet,
+#     (the FaucetOps authority); on boot it mints a dedicated base wallet,
 #     funds a pool, and serves /request, /sign, /health. No internal
 #     quipnode — RPC goes to the public bootnode endpoints over WSS, with
 #     ordered failover.
@@ -20,8 +20,8 @@
 #   <operator-1-mnemonic>            op-1's BIP-39 phrase (Proton Pass). The
 #                                    Rust faucet derives op-1's hybrid account
 #                                    from it natively — no seed-derivation step.
-#                                    op-1 is the chain sudo key, so the faucet
-#                                    can sudo-mint its base wallet. A 0x + 64-hex
+#                                    op-1 is the FaucetOps authority, so the
+#                                    faucet can mint its base wallet. A 0x + 64-hex
 #                                    seed works in this field too.
 #   <certifier-token-faucet>         from certifier.quip.network admin for
 #                                    faucet.testnet.quip.network (the old
@@ -73,9 +73,10 @@ services:
       - --allow-any-chain
     env:
       # op-1's BIP-39 mnemonic (Proton Pass). The faucet derives op-1's hybrid
-      # account from it; op-1 is the chain sudo key, so base-wallet top-ups via
-      # Sudo.sudo(FaucetOps.mint) succeed. Verify after deploy: the startup log
-      # prints `funder: <ss58>` — confirm it equals op-1's known sudo address.
+      # account from it; op-1 is the FaucetOps authority, so base-wallet top-ups via
+      # FaucetOps.mint succeed (the Foundation must have called set_authority and
+      # enabled the faucet). Verify after deploy: the startup log
+      # prints `funder: <ss58>` — confirm it equals op-1's known authority address.
       - QUIP_FAUCET_FAUCET_KEY=<operator-1-mnemonic>
       - RUST_LOG=info
     expose:
