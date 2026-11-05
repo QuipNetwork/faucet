@@ -54,7 +54,7 @@ again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
 | Code | Meaning |
 |---|---|
 | `400` | Invalid JSON / `dest` / `amount`, including an `amount` above `--max-amount-plancks` (default: `--amount`, one dispense). |
-| `403` | Destination already funded — free balance exceeds `--max-funded-balance-plancks` (default: one dispense; set 0 to deny any funds). Body includes `free_balance_plancks`. |
+| `409` | Destination already funded — free balance exceeds `--max-funded-balance-plancks` (default: one dispense; set 0 to deny any funds). Body includes `free_balance_plancks`. Not `403`: a Flux host blocks the sender from this port for minutes after one, and behind FDM the sender is the load balancer. |
 | `429` | Rate limited (`retry_after_seconds`). Confirmed-empty accounts use the short `--lenient-rate-limit-seconds`; if the balance query can't run, the strict `--rate-limit-seconds` applies. |
 | `503` | `/sign` pool temporarily exhausted (`retry_after_seconds`), or balance check unavailable when `--balance-query-fail-closed`. |
 | `502` | Transfer/sign failed; see logs. |
@@ -63,7 +63,7 @@ again for a fresh one. Hybrid-chain responses carry the H4 signature envelope
 
 Every request first checks the destination's on-chain free balance. Accounts
 already holding more than `--max-funded-balance-plancks` (default: one dispense)
-are denied (`403`); low or empty accounts are only lightly throttled
+are denied (`409`); low or empty accounts are only lightly throttled
 (`--lenient-rate-limit-seconds`, just long enough to bridge inclusion latency).
 Set the lenient window `>=` chain block time. On a balance-query failure the
 faucet falls back to the strict window and proceeds (`--balance-query-fail-open`,
@@ -90,7 +90,7 @@ call, not a pure read-only probe:
 curl -X POST http://localhost:8087/request \
     -H 'Content-Type: application/json' \
     -d '{"dest":"<ss58 or 0x-hex>"}'
-# 403 {"error":"destination already funded","free_balance_plancks":998996851040628}
+# 409 {"error":"destination already funded","free_balance_plancks":998996851040628}
 ```
 
 For a read-only balance query independent of the faucet, the node also serves
