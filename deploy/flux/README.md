@@ -162,8 +162,8 @@ curl -s -XPOST https://evm-rpc.aglais.quip.network:20049 -H 'content-type: appli
 d="0x$(openssl rand -hex 32)"
 curl -sS -m20 -XPOST https://faucet.aglais.quip.network/request \
   -H 'content-type: application/json' -d "{\"dest\":\"$d\",\"amount\":11000000000000}"
-# re-request the same dest past the 5s lenient window -> 403 destination already funded
-# (that 403 is the proof it landed; use >10 AGLS so the max-funded gate trips)
+# re-request the same dest past the 5s lenient window -> 409 destination already funded
+# (that 409 is the proof it landed; use >10 AGLS so the max-funded gate trips)
 ```
 
 Drip above 10 AGLS or the balance gate won't deny the recheck and the "did it land?" signal

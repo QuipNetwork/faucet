@@ -145,8 +145,10 @@ fn map_gate(decision: &GateDecision, route: &str, dest_account: &str) -> Option<
                 outcome = "already_funded",
                 "faucet refused"
             );
+            // Not 403: a Flux host blocks the sender from this port for minutes after
+            // seeing one, and behind FDM the sender is the load balancer.
             Some(reply(
-                StatusCode::FORBIDDEN,
+                StatusCode::CONFLICT,
                 json!({ "error": "destination already funded", "free_balance_plancks": free }),
             ))
         }
@@ -393,5 +395,14 @@ mod tests {
         assert!(parse_dest("0xnot-hex-at-all").is_none());
         assert!(parse_dest("").is_none());
         assert!(parse_dest("not-an-address").is_none());
+    }
+
+    #[test]
+    fn already_funded_replies_409_with_the_balance() {
+        let (status, Json(body)) = map_gate(&GateDecision::Funded { free: 42 }, "/request", "0xab")
+            .expect("a funded dest is refused");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "destination already funded");
+        assert_eq!(body["free_balance_plancks"], 42);
     }
 }

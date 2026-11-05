@@ -122,7 +122,7 @@ curl -sS -X POST -H 'content-type: application/json' \
 curl -i -X POST -H 'content-type: application/json' \
     --data '{"dest":"<ss58>","amount":1000000000000}' \
     https://faucet.testnet.quip.network/request
-# Expect: 403 {"error":"destination already funded","free_balance_plancks":…}
+# Expect: 409 {"error":"destination already funded","free_balance_plancks":…}
 # (a rapid repeat to a still-empty dest instead returns 429 with retry_after_seconds)
 ```
 
