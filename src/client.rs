@@ -383,7 +383,7 @@ pub async fn submit_mint_extrinsic(
         .await
         .map_err(MintSubmitError::rejected)?;
     let encoded = format!("0x{}", hex::encode(bytes));
-    let transaction_hash: Hash = sp_core::hashing::blake2_256(bytes).into();
+    let transaction_hash: Hash = sp_crypto_hashing::blake2_256(bytes).into();
     confirm_with_timeout(std::time::Duration::from_secs(120), async {
         let mut statuses = client
             .subscribe::<Value, _>(
@@ -441,8 +441,8 @@ async fn finalized_mint_receipt(
         })
         .context("mint extrinsic absent from finalized block")?;
     let index = u32::try_from(index).context("extrinsic index overflow")?;
-    let mut key = sp_core::hashing::twox_128(b"System").to_vec();
-    key.extend_from_slice(&sp_core::hashing::twox_128(b"Events"));
+    let mut key = sp_crypto_hashing::twox_128(b"System").to_vec();
+    key.extend_from_slice(&sp_crypto_hashing::twox_128(b"Events"));
     let events: Option<String> = client
         .request(
             "state_getStorage",

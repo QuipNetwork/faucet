@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     std::fs::write(path, &metadata)?;
     println!(
         "metadata V16 blake2_256: 0x{}",
-        hex::encode(sp_core::hashing::blake2_256(&metadata))
+        hex::encode(sp_crypto_hashing::blake2_256(&metadata))
     );
     Ok(())
 }

@@ -35,8 +35,8 @@ async fn storage<T: DecodeAll>(
     pallet: &str,
     item: &str,
 ) -> Result<Option<T>> {
-    let mut key = sp_core::hashing::twox_128(pallet.as_bytes()).to_vec();
-    key.extend_from_slice(&sp_core::hashing::twox_128(item.as_bytes()));
+    let mut key = sp_crypto_hashing::twox_128(pallet.as_bytes()).to_vec();
+    key.extend_from_slice(&sp_crypto_hashing::twox_128(item.as_bytes()));
     let raw: Option<String> = client
         .request(
             "state_getStorage",
