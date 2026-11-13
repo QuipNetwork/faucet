@@ -26,10 +26,8 @@ use pallet_faucet_ops::FaucetState;
 use parking_lot::RwLock;
 use quip_protocol_runtime::{AccountId, Hash, RuntimeCall};
 use quip_transaction_crypto::HybridPair;
-use sp_core::{
-    crypto::Ss58Codec,
-    hashing::{blake2_128, blake2_256, twox_128},
-};
+use sp_core::crypto::Ss58Codec;
+use sp_crypto_hashing::{blake2_128, blake2_256, twox_128};
 use tracing::warn;
 
 use crate::nonce::NonceLane;
