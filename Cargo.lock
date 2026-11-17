@@ -2573,7 +2573,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5048,8 +5048,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-emission-controller"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5063,8 +5063,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-evm-chain-id"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-support",
  "frame-system",
@@ -5074,8 +5074,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-faucet-ops"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5128,8 +5128,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-miner-registry"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5181,8 +5181,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-quantum-compute-mempool"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5199,8 +5199,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-quantum-pow"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "blake3",
  "frame-benchmarking",
@@ -5359,8 +5359,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-slash-policy"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-election-provider-support",
@@ -5456,8 +5456,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-validator-admission"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -5484,8 +5484,8 @@ dependencies = [
 
 [[package]]
 name = "pallet-xqvm"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-support",
@@ -6115,7 +6115,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -6123,8 +6123,8 @@ dependencies = [
 
 [[package]]
 name = "quantum-validation"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "blake3",
  "ising-generators",
@@ -6205,8 +6205,8 @@ dependencies = [
 
 [[package]]
 name = "quip-protocol-runtime"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "frame-benchmarking",
  "frame-election-provider-support",
@@ -6274,8 +6274,8 @@ dependencies = [
 
 [[package]]
 name = "quip-transaction-crypto"
-version = "0.5.0-rc.2"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+version = "0.5.1"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "log",
  "parity-scale-codec",
@@ -6289,7 +6289,7 @@ dependencies = [
 [[package]]
 name = "quip-transaction-crypto-core"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.0-rc2#2e7d17e92496a6eb543c20ab7566a65de3d9ed31"
+source = "git+ssh://git@gitlab.com/quip.network/quip-validator.git?tag=v0.5.1#b23738ab13cf04ae451518f4dcb3ddaaef2909d2"
 dependencies = [
  "bip39",
  "blake2",
@@ -6887,7 +6887,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6965,7 +6965,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.7",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8981,7 +8981,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9000,7 +9000,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -9950,7 +9950,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

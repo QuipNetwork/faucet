@@ -123,7 +123,7 @@ cargo-test:
     - cargo clippy --locked --all-targets -- -D warnings
     - cargo test --locked
     - cargo run --locked --example export_metadata -- /tmp/faucet-runtime.scale
-    - cmp metadata/runtime-120.scale /tmp/faucet-runtime.scale
+    - cmp metadata/runtime-121.scale /tmp/faucet-runtime.scale
 
 # ---------------------------------------------------------------------------
 # Compile the release binary each image ships, once per architecture on a

@@ -1,7 +1,7 @@
 # Quip Faucet
 
 Standalone dev faucet for [Quip Network](https://gitlab.com/quip.network)
-substrate chains, compiled for the pinned Phase 2 runtime (spec 120, transaction 7).
+substrate chains, compiled for the pinned Phase 2 runtime (spec 121, transaction 7).
 A Foundation-appointed operational key submits direct signed `FaucetOps.mint`
 to replenish a dedicated base wallet. The base wallet transfers to `/request`
 recipients and pre-funds the `/sign` pool using concurrent nonce lanes.
@@ -230,7 +230,7 @@ Needs SSH access (local) or a CI job token to fetch the private
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-cargo run --locked --example export_metadata -- metadata/runtime-120.scale
+cargo run --locked --example export_metadata -- metadata/runtime-121.scale
 cargo build --release --locked
 ```
 

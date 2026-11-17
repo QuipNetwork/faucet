@@ -1,15 +1,15 @@
 # Runtime schema
 
-`runtime-120.scale` is SCALE metadata V16 exported from the quip-validator
-v0.5.0-rc2 release runtime at `2e7d17e92496a6eb543c20ab7566a65de3d9ed31` (spec 120,
+`runtime-121.scale` is SCALE metadata V16 exported from the quip-validator
+v0.5.1 release runtime at `b23738ab13cf04ae451518f4dcb3ddaaef2909d2` (spec 121,
 transaction 7). SDK: QuipNetwork/polkadot-sdk tag `v0.4.0` (stable2609-1).
 
-BLAKE2-256: `f683018155b22096fd0b230fda786eac15529a20866ab829f0661c5fd97240c8`.
+BLAKE2-256: `544107a2bf420a32bace36442cc4478cf856ea265258a4457f8c65b710a94250`.
 
 Regenerate with:
 
 ```sh
-cargo run --locked --example export_metadata -- metadata/runtime-120.scale
+cargo run --locked --example export_metadata -- metadata/runtime-121.scale
 ```
 
 The service consumes the pinned runtime's Rust types directly. This snapshot
@@ -29,3 +29,7 @@ byte-identical.
 
 Re-pinned to v0.5.0-rc2 on 2026-11-13 for the spec-120 relaunch. `sp_core::hashing` is
 gone in this SDK, so the hash functions now come from `sp-crypto-hashing`.
+
+Re-pinned to v0.5.1 on 2026-11-17 for runtime 121, enacted on aglais in place (it pauses new XQVM
+program admission). The snapshot differs from the 120 one in one byte, `System.Version.spec_version`.
+The faucet refuses any other spec, so it has to be rebuilt with every runtime upgrade.
