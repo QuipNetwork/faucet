@@ -1,4 +1,4 @@
-//! cargo run --locked --example export_metadata -- metadata/runtime-119.scale
+//! cargo run --locked --example export_metadata -- metadata/runtime-121.scale
 use anyhow::{Context, Result};
 use quip_protocol_runtime::{Runtime, RuntimeGenesisConfig};
 use sp_runtime::BuildStorage;
